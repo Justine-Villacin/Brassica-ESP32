@@ -1,5 +1,5 @@
 /*
-  Brassica_ESP32.ino  (v6.1)
+  Brassica_ESP32.ino  (v6.2)
   ESP32 greenhouse controller for the Brassica dashboard.
 
   HARDWARE
@@ -12,31 +12,27 @@
   WHAT IT DOES
     - Reads the sensors and runs the automation LOCALLY (works with no Wi-Fi):
         fans  <- temperature      (each fan has its own thresholds)
-        pump  <- soil moisture    (either of two)
-    - FAIL-SAFE: if a sensor looks disconnected, whatever depends on it is forced
-      OFF immediately. One soil sensor failing is fine (the other one is used);
-      both failing switches the pump off.
-    - Pump safety: max run time + cooldown, so it can never run away.
-    - Reports to the dashboard with POST /update (every 10 s hosted, 3 s local).
-    - Wi-Fi self-heals; the sensor/automation loop is never blocked by Wi-Fi.
+        pump  <- soil moisture    (AUTOMATIC mode)
+        pump  <- dashboard button (MANUAL override, separate logic)
+    - FAIL-SAFE (automatic mode): if a sensor looks disconnected, whatever depends
+      on it is forced OFF immediately.
+    - Pump safety (automatic mode): max run time + cooldown.
+    - Reports to the dashboard with POST /update.
 
-  CHANGE Wi-Fi WITHOUT RE-FLASHING (since v6.0)
-    1. The ESP32 scans for nearby networks and sends the list to the dashboard.
-       Pick one there, type the password, and the ESP32 switches over. If the new
-       network does not work within 45 s it goes back to the old one by itself
-       and tells the dashboard what went wrong.
-    2. If it cannot connect to ANY network (or cannot reach the dashboard server
-       for a few minutes) it opens its own Wi-Fi, "Brassica-Setup-XXXX"
-       (password in config.h). Join it with a phone, open http://192.168.4.1 and
-       type the network (and, if needed, the server address).
-    3. BOOT button: hold 3 s = open that setup Wi-Fi now. Hold 10 s = erase all
-       saved settings.
-    Saved settings live in flash and survive reboots. config.h only holds the
-    defaults used when nothing has been saved.
-
-  NEW IN v6.1
-    - Second soil sensor and second exhaust fan; the light sensor and warm light
-      were removed.
+  NEW IN v6.2
+    - MANUAL PUMP OVERRIDE is now implemented with its own logic. The dashboard
+      reply carries  "pump_override": true/false  (also accepted: "manual_pump",
+      "pump_manual"). While true the pump is ON and the automatic soil logic,
+      max-run, cooldown and sensor fail-safe are ignored. If the confirmation
+      stops arriving for MANUAL_OVERRIDE_TIMEOUT_MS, or the ESP32 reboots, the
+      override is dropped and the pump goes OFF.
+    - SOIL READINGS ARE FROZEN while the pump is running (manual or automatic) and
+      for SOIL_SETTLE_MS afterwards. The value shown is the last clean reading
+      taken before the pump started.
+    - Soil sensor reading rewritten: trimmed average of 32 samples (rejects spikes),
+      exponential smoothing, a single glitch no longer marks the sensor as
+      disconnected, explicit 12-bit / 11 dB ADC setup, raw value printed to
+      the Serial Monitor to make calibration easy.
 
   JSON SENT TO POST /update
     temperature, humidity         (omitted when the DHT is down)
@@ -44,16 +40,12 @@
     soil_moisture                 (average of the working soil sensors)
     dht_connected, soil1_connected, soil2_connected
     fan, fan2, water_pump         ("ON"/"OFF"; fan = exhaust fan 1)
+    pump_override, soil_hold      (v6.2, can be disabled: REPORT_EXTRA_FIELDS)
     wifi_ssid, ip, rssi, fw       (device info)
-    ctl                           (true about every 30 s: "any Wi-Fi change waiting for me?")
-    log                           (true about every 5 min: "store a history row")
-    wifi_networks                 (only right after a new scan)
-    wifi_ack                      (only while reporting the result of a Wi-Fi change)
+    ctl, log, wifi_networks, wifi_ack
 
-  LIBRARIES (Arduino IDE -> Tools -> Manage Libraries)
+  LIBRARIES
     - "DHT sensor library" by Adafruit (accept "Adafruit Unified Sensor" too)
-    Everything else (WiFi, HTTPClient, Preferences, WebServer, DNSServer) is
-    built into the "esp32" board package by Espressif (Boards Manager).
 */
 
 #include <WiFi.h>
@@ -70,11 +62,28 @@ Preferences prefs;
 WebServer portalServer(80);
 DNSServer dnsServer;
 
+// ---- Soil sensor state (one entry per sensor) ----
+struct SoilSensor {
+  uint8_t pin;
+  int     rawDry;
+  int     rawWet;
+  int     pct;          // calibrated, smoothed percentage (last good value)
+  int     raw;          // last raw ADC average (for calibration / debugging)
+  bool    connected;
+  bool    valid;
+  int     badCount;     // consecutive bad measurements
+  float   smooth;       // smoothed percentage (float)
+  bool    haveSmooth;
+};
+
+SoilSensor soil[2] = {
+  { SOIL1_PIN, SOIL1_RAW_DRY, SOIL1_RAW_WET, 0, 0, false, false, 0, 0.0f, false },
+  { SOIL2_PIN, SOIL2_RAW_DRY, SOIL2_RAW_WET, 0, 0, false, false, 0, 0.0f, false }
+};
+
 // ---- Live sensor/relay state ----
 float temperatureC = 0.0f;
 float humidityPct  = 0.0f;
-int   soil1Pct     = 0;
-int   soil2Pct     = 0;
 int   soilAvgPct   = 0;     // average of the working soil sensors (reported to the dashboard)
 int   soilCtlPct   = 0;     // the value that drives the pump (average or driest, see config.h)
 
@@ -82,18 +91,13 @@ bool dhtConnected   = false;
 bool soil1Connected = false;
 bool soil2Connected = false;
 bool haveSoil       = false;   // at least one soil sensor works
+bool soilHeld       = false;   // soil readings currently frozen because of the pump
 
 bool pumpOn = false;
 bool fan1On = false;
 bool fan2On = false;
 
-// valid = we have received at least one good reading since boot / recovery
-bool soil1Valid = false;
-bool soil2Valid = false;
-
-int dhtFailCount   = 0;
-int soil1RailCount = 0;
-int soil2RailCount = 0;
+int dhtFailCount = 0;
 
 // Time each relay last changed. Initialised "long ago" so the first
 // switch after boot is allowed immediately (unsigned wrap-around is intended).
@@ -103,12 +107,19 @@ unsigned long pumpChangedAt = (unsigned long)(0UL - (unsigned long)MIN_RELAY_HOL
 
 bool pumpInCooldown = false;
 unsigned long pumpCooldownStart = 0;
+unsigned long pumpStoppedAt = 0;     // 0 = pump has not stopped yet since boot
+
+// ---- Manual pump override (from the dashboard) ----
+bool manualRequested = false;        // dashboard wants the pump ON
+bool manualWasActive = false;        // override was driving the pump on the previous cycle
+bool manualDirty     = false;        // override changed: apply immediately
+unsigned long manualLastConfirm = 0; // last time a server reply confirmed the override state
 
 unsigned long lastSensorRead = 0;
 unsigned long lastServerPost = 0;
 unsigned long lastPostOkAt   = 0;
-unsigned long lastCtlOkAt    = 0;    // last successful post that also asked for pending commands
-unsigned long lastLogOkAt    = 0;    // last successful post that also added a history row
+unsigned long lastCtlOkAt    = 0;
+unsigned long lastLogOkAt    = 0;
 bool ctlEverSent = false;
 bool logEverSent = false;
 int lowHeapCount  = 0;
@@ -124,8 +135,8 @@ String candSsid[2];
 String candPass[2];
 int candCount = 0;
 int candIndex = 0;
-unsigned long connectingSince = 0;   // 0 = no attempt running
-unsigned long wifiDownSince   = 0;   // 0 = Wi-Fi currently up
+unsigned long connectingSince = 0;
+unsigned long wifiDownSince   = 0;
 volatile int lastDiscReason   = 0;
 
 // ---- Wi-Fi change requested from the dashboard ("trial") ----
@@ -133,19 +144,17 @@ bool   trialActive    = false;
 bool   trialConnected = false;
 String trialId, trialSsid, trialPass;
 unsigned long trialStart = 0;
-String handledId;                    // last request id we finished (ok or failed)
+String handledId;
 
-// result to report back to the dashboard (sent until a POST succeeds)
 String ackId, ackStatus, ackSsid, ackReason;
 
-// request received in a reply, applied after the HTTP call has finished
 bool   havePend = false;
 String pendId, pendSsid, pendPass;
 
 // ---- Nearby-network scan (asynchronous) ----
 bool scanRunning   = false;
-bool scanRequested = true;           // first scan as soon as Wi-Fi is up
-bool networksFresh = false;          // new list not yet sent to the dashboard
+bool scanRequested = true;
+bool networksFresh = false;
 unsigned long scanStartedAt = 0;
 unsigned long lastScanAt    = 0;
 String networksJson = "[]";
@@ -198,7 +207,10 @@ void handlePortalSave();
 void handlePortalRedirect();
 void handleButton(unsigned long now);
 void factoryReset();
-void readSensors();
+bool soilHoldActive(unsigned long now);
+void readSoilSensor(int idx);
+void readSensors(unsigned long now);
+void runPumpAuto(unsigned long now);
 void runAutomation(unsigned long now);
 String buildPayload(bool wantCtl, bool wantLog);
 bool postReading();
@@ -267,8 +279,6 @@ String htmlEscape(const String& s) {
   return out;
 }
 
-// A neighbour's Wi-Fi name can contain any bytes. Anything that is not valid
-// UTF-8 is skipped so it can never corrupt the JSON we send.
 bool isValidUtf8(const String& s) {
   const unsigned char* p = (const unsigned char*)s.c_str();
   size_t n = s.length();
@@ -297,7 +307,6 @@ int hexVal(char c) {
   return -1;
 }
 
-// "4a6f" -> "Jo". Returns "" for odd length, non-hex, or an embedded NUL.
 String hexDecode(const String& hex) {
   String out;
   if (hex.length() % 2 != 0) return out;
@@ -312,8 +321,6 @@ String hexDecode(const String& hex) {
   return out;
 }
 
-// Finds  "key" : "value"  in a small JSON text and returns value ("" if absent).
-// Only used on the server's reply, whose values are plain hex / letters.
 String jsonStringValue(const String& body, const char* key) {
   String needle = String("\"") + key + "\"";
   int k = body.indexOf(needle);
@@ -328,14 +335,21 @@ String jsonStringValue(const String& body, const char* key) {
   return body.substring(i, j);
 }
 
-bool jsonBoolTrue(const String& body, const char* key) {
+// Returns 1 for true, 0 for false, -1 when the key is absent / not a boolean.
+int jsonBoolValue(const String& body, const char* key) {
   String needle = String("\"") + key + "\"";
   int k = body.indexOf(needle);
-  if (k < 0) return false;
+  if (k < 0) return -1;
   int i = k + (int)needle.length();
   int len = (int)body.length();
   while (i < len && (body[i] == ' ' || body[i] == ':')) i++;
-  return body.substring(i, i + 4) == "true";
+  if (body.substring(i, i + 4) == "true")  return 1;
+  if (body.substring(i, i + 5) == "false") return 0;
+  return -1;
+}
+
+bool jsonBoolTrue(const String& body, const char* key) {
+  return jsonBoolValue(body, key) == 1;
 }
 
 // ---------------------------------------------------------------------------
@@ -373,8 +387,6 @@ void loadSettings() {
   handledId = nvsGetString("cfgid");
 }
 
-// Saved network first, then the defaults from config.h. A bad saved network
-// can therefore never strand the device.
 void buildCandidates() {
   candCount = 0;
   String saved = nvsGetString("ssid");
@@ -399,7 +411,6 @@ void onWiFiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
   switch (event) {
     case ARDUINO_EVENT_WIFI_STA_DISCONNECTED: {
       int reason = (int)info.wifi_sta_disconnected.reason;
-      // 8 = "we left on purpose" (our own disconnect before a new begin()).
       if (reason != 8) lastDiscReason = reason;
       Serial.printf("[WiFi] Disconnected, reason code %d\n", reason);
       break;
@@ -436,9 +447,9 @@ void beginWiFi(const String& ssid, const String& pass) {
 }
 
 void startWiFi() {
-  WiFi.persistent(false);          // don't wear out flash on every begin()
+  WiFi.persistent(false);
   WiFi.mode(WIFI_STA);
-  WiFi.setSleep(false);            // modem-sleep causes random dropouts/latency
+  WiFi.setSleep(false);
   WiFi.setAutoReconnect(true);
   WiFi.onEvent(onWiFiEvent);
   if (candCount > 0) {
@@ -450,11 +461,10 @@ void startWiFi() {
   }
 }
 
-// Wi-Fi supervision (never blocks)
 void maintainWiFi(unsigned long now) {
   bool up = (WiFi.status() == WL_CONNECTED);
 
-  if (trialActive) {               // a network chosen on the dashboard is being tested
+  if (trialActive) {
     serviceTrial(now, up);
     return;
   }
@@ -476,16 +486,15 @@ void maintainWiFi(unsigned long now) {
   }
 #endif
 
-  if (candCount == 0) return;      // nothing to try; the setup portal handles this
+  if (candCount == 0) return;
 
   if (connectingSince == 0 || now - connectingSince >= (unsigned long)WIFI_ATTEMPT_MS) {
-    if (connectingSince != 0) candIndex = (candIndex + 1) % candCount;   // try the next network
+    if (connectingSince != 0) candIndex = (candIndex + 1) % candCount;
     Serial.printf("[Brassica] Wi-Fi down, trying \"%s\"...\n", candSsid[candIndex].c_str());
     beginWiFi(candSsid[candIndex], candPass[candIndex]);
   }
 }
 
-// ---- Wi-Fi change requested from the dashboard ----
 void setAck(const String& id, const char* status, const String& ssid, const String& reason) {
   ackId = id;
   ackStatus = status;
@@ -495,7 +504,7 @@ void setAck(const String& id, const char* status, const String& ssid, const Stri
 
 void startTrial() {
   if (trialActive) return;
-  if (pendId.length() == 0 || pendId == handledId) return;   // already dealt with
+  if (pendId.length() == 0 || pendId == handledId) return;
 
   trialActive = true;
   trialConnected = false;
@@ -540,11 +549,11 @@ void serviceTrial(unsigned long now, bool up) {
     if (!trialConnected) {
       trialConnected = true;
       setAck(trialId, "ok", trialSsid, String(""));
-      lastServerPost = millis() - postIntervalMs();            // report right away
+      lastServerPost = millis() - postIntervalMs();
       Serial.println("[Brassica] Joined the new network, confirming with the dashboard...");
     }
   } else if (!up && connectingSince != 0 && now - connectingSince >= (unsigned long)WIFI_ATTEMPT_MS) {
-    beginWiFi(trialSsid, trialPass);                          // one more try
+    beginWiFi(trialSsid, trialPass);
   }
 
   if (now - trialStart >= (unsigned long)WIFI_TRIAL_TIMEOUT_MS) {
@@ -554,7 +563,7 @@ void serviceTrial(unsigned long now, bool up) {
 }
 
 // ---------------------------------------------------------------------------
-// Nearby networks (asynchronous: never blocks sensors or relays)
+// Nearby networks
 // ---------------------------------------------------------------------------
 void finishScan(int n) {
   String json = "[";
@@ -595,9 +604,9 @@ void finishScan(int n) {
 void startScan() {
   if (scanRunning) return;
   scanRequested = false;
-  lastScanAt = millis();           // never retry in a tight loop, even if this fails
+  lastScanAt = millis();
   WiFi.scanDelete();
-  int r = WiFi.scanNetworks(true, true);   // async = true, show hidden = true
+  int r = WiFi.scanNetworks(true, true);
   if (r == WIFI_SCAN_RUNNING) {
     scanRunning = true;
     scanStartedAt = millis();
@@ -621,13 +630,13 @@ void serviceScan(unsigned long now) {
     }
     return;
   }
-  if (trialActive) return;                                  // never scan while testing a network
+  if (trialActive) return;
   if (WiFi.status() != WL_CONNECTED && !portalActive) return;
   if (scanRequested || now - lastScanAt >= (unsigned long)WIFI_SCAN_INTERVAL_MS) startScan();
 }
 
 // ---------------------------------------------------------------------------
-// Setup portal  (the ESP32's own Wi-Fi, for when it cannot connect anywhere)
+// Setup portal
 // ---------------------------------------------------------------------------
 void handlePortalRedirect() {
   portalServer.sendHeader("Location", String("http://") + WiFi.softAPIP().toString() + "/", true);
@@ -753,7 +762,7 @@ void startPortal() {
     return;
   }
   delay(100);
-  dnsServer.start(53, "*", WiFi.softAPIP());   // makes phones open the page automatically
+  dnsServer.start(53, "*", WiFi.softAPIP());
   portalServer.begin();
   portalActive = true;
   portalStartedAt = millis();
@@ -780,11 +789,11 @@ void servicePortal(unsigned long now) {
 
   if (!portalActive) {
     bool want = false;
-    if (candCount == 0 && !trialActive) want = true;                                   // nothing configured
+    if (candCount == 0 && !trialActive) want = true;
     if (!up && !trialActive && wifiDownSince != 0 &&
-        now - wifiDownSince >= (unsigned long)PORTAL_AFTER_WIFI_DOWN_MS) want = true;  // Wi-Fi gone
-    if (up && postFailCount >= PORTAL_AFTER_POST_FAILS) want = true;                   // server unreachable
-    if (buttonPortalRequested) { want = true; buttonPortalRequested = false; }         // BOOT held 3 s
+        now - wifiDownSince >= (unsigned long)PORTAL_AFTER_WIFI_DOWN_MS) want = true;
+    if (up && postFailCount >= PORTAL_AFTER_POST_FAILS) want = true;
+    if (buttonPortalRequested) { want = true; buttonPortalRequested = false; }
     if (want) startPortal();
     return;
   }
@@ -794,7 +803,6 @@ void servicePortal(unsigned long now) {
 
   if (WiFi.softAPgetStationNum() > 0) portalLastClient = now;
 
-  // Close it again once everything works and nobody has used it for 2 minutes.
   if (up && !trialActive && postFailCount == 0 && lastPostOkAt != 0 &&
       now - lastPostOkAt < 30000UL && now - portalLastClient > 120000UL) {
     stopPortal();
@@ -847,11 +855,15 @@ void setup() {
   pinMode(BOOT_BUTTON_PIN, INPUT_PULLUP);
   writeAllRelays();                // everything OFF until a real reading says otherwise
 
+  // Explicit ADC setup so the raw numbers are the same on every board / core version.
+  analogReadResolution(12);                       // 0..4095
+  analogSetPinAttenuation(SOIL1_PIN, ADC_11db);   // ~0-3.3 V range
+  analogSetPinAttenuation(SOIL2_PIN, ADC_11db);
   pinMode(SOIL1_PIN, INPUT);
   pinMode(SOIL2_PIN, INPUT);
   dht.begin();
 
-  prefs.begin("brassica", false);  // creates the settings area on first boot
+  prefs.begin("brassica", false);
   prefs.end();
   loadSettings();
   buildCandidates();
@@ -862,7 +874,7 @@ void setup() {
 
   Serial.printf("[Brassica] Server target: %s://%s:%d%s\n",
                 srvTls ? "https" : "http", srvHost.c_str(), srvPort, UPDATE_PATH);
-  startWiFi();                     // non-blocking: automation starts immediately
+  startWiFi();
 }
 
 // ---------------------------------------------------------------------------
@@ -876,131 +888,131 @@ void loop() {
 
   if (now - lastSensorRead >= SENSOR_READ_INTERVAL_MS) {
     lastSensorRead = now;
-    readSensors();
+    readSensors(now);
     runAutomation(millis());
     printStatus();
   }
 
-  // Never post while a scan is running: the radio is busy and the post would be slow.
   if (!scanRunning && now - lastServerPost >= postIntervalMs()) {
     if (WiFi.status() == WL_CONNECTED) {
       postReading();
     } else {
       Serial.println("[Brassica] Skipping post, Wi-Fi not connected.");
     }
-    lastServerPost = millis();     // measured AFTER the post so a slow post never causes back-to-back posts
+    lastServerPost = millis();
+  }
+
+  // The dashboard just switched the manual pump override: apply it right away
+  // instead of waiting for the next sensor cycle.
+  if (manualDirty) {
+    manualDirty = false;
+    runAutomation(millis());
   }
 
   if (rebootAt != 0 && (long)(millis() - rebootAt) >= 0) {
     ESP.restart();
   }
 
-  // Status LED: solid = Wi-Fi up, slow blink = Wi-Fi down, fast blink = setup Wi-Fi open.
   unsigned long blinkMs = portalActive ? 150UL : 300UL;
   bool wifiUp = (WiFi.status() == WL_CONNECTED);
   digitalWrite(STATUS_LED_PIN, (wifiUp && !portalActive) ? HIGH : (((millis() / blinkMs) % 2) ? HIGH : LOW));
 
-  delay(portalActive ? 5 : 20);    // let Wi-Fi/idle tasks run
+  delay(portalActive ? 5 : 20);
 }
 
 // ---------------------------------------------------------------------------
 // Sensors
 // ---------------------------------------------------------------------------
-int readAnalogAveraged(uint8_t pin) {
-  long sum = 0;
-  for (int i = 0; i < ADC_SAMPLES; i++) {
-    sum += analogRead(pin);
-    delayMicroseconds(200);
-  }
-  return (int)(sum / ADC_SAMPLES);
+
+// True while the soil readings must stay frozen: pump running, or the
+// pump stopped less than SOIL_SETTLE_MS ago.
+bool soilHoldActive(unsigned long now) {
+  if (!SOIL_HOLD_WHILE_PUMP) return false;
+  if (pumpOn) return true;
+  if (pumpStoppedAt != 0 && (now - pumpStoppedAt) < (unsigned long)SOIL_SETTLE_MS) return true;
+  return false;
 }
 
-// Reads the soil sensor. Returns true if it looks connected.
-// A sensor is "disconnected" if:
-//   - the average sits at either rail (short to GND or 3V3), OR
-//   - the samples are jumping around (floating pin noise).
-bool readSoilSensor(
-    uint8_t pin,
-    int rawDry,
-    int rawWet,
-    int &pct,
-    bool &valid,
-    int &railCount
-) {
-  const int N = ADC_SAMPLES;
-  long sum = 0;
-  int mn = 4095;
-  int mx = 0;
+// Reads one soil sensor into soil[idx].
+//  1. take ADC_SAMPLES readings, sort them
+//  2. throw away the lowest and highest quarter, average the middle half
+//     (rejects the spikes that Wi-Fi bursts and relay switching cause)
+//  3. fault detection on the clean value: pinned to a rail, or a wide spread
+//     (floating pin). A fault only counts after RAIL_COUNT_THRESHOLD bad
+//     measurements in a row; until then the last good value is kept.
+//  4. map with this sensor's own dry/wet calibration, clamp to 0..100 and smooth.
+void readSoilSensor(int idx) {
+  SoilSensor &s = soil[idx];
 
-  for (int i = 0; i < N; i++) {
-    int v = analogRead(pin);
-    sum += v;
-
-    if (v < mn) mn = v;
-    if (v > mx) mx = v;
-
-    delayMicroseconds(200);
+  int samples[ADC_SAMPLES];
+  for (int i = 0; i < ADC_SAMPLES; i++) {
+    samples[i] = analogRead(s.pin);
+    delayMicroseconds(300);
+  }
+  // insertion sort
+  for (int i = 1; i < ADC_SAMPLES; i++) {
+    int v = samples[i];
+    int j = i - 1;
+    while (j >= 0 && samples[j] > v) {
+      samples[j + 1] = samples[j];
+      j--;
+    }
+    samples[j + 1] = v;
   }
 
-  int raw = (int)(sum / N);
-  int spread = mx - mn;
+  int trim = ADC_SAMPLES / 4;
+  int lo = trim;
+  int hi = ADC_SAMPLES - trim - 1;
+  long sum = 0;
+  for (int i = lo; i <= hi; i++) sum += samples[i];
+  int raw = (int)(sum / (hi - lo + 1));
+  int spread = samples[hi] - samples[lo];
+  s.raw = raw;
 
-  // A rail reading is treated as an immediate fault.
-  bool railFault = (raw <= 20 || raw >= 4075);
-
-  // A noisy/floating signal is treated as a fault after
-  // consecutive bad measurements.
+  bool railFault  = (raw <= SOIL_RAIL_LOW || raw >= SOIL_RAIL_HIGH);
   bool noisyFault = (spread > SOIL_NOISE_LIMIT);
 
-  if (railFault) {
-    railCount = RAIL_COUNT_THRESHOLD;
-    valid = false;
-    pct = 0;
-    return false;
+  if (railFault || noisyFault) {
+    if (s.badCount < 1000) s.badCount++;
+    if (s.badCount >= RAIL_COUNT_THRESHOLD) {
+      s.connected = false;
+      s.valid = false;
+      s.pct = 0;
+      s.haveSmooth = false;
+    }
+    // else: a single glitch, keep the last good value and state
+    return;
   }
 
-  if (noisyFault) {
-    if (railCount < RAIL_COUNT_THRESHOLD) {
-      railCount++;
-    }
+  s.badCount = 0;
 
-    if (railCount >= RAIL_COUNT_THRESHOLD) {
-      valid = false;
-      pct = 0;
-      return false;
-    }
-
-    // Do not report an old reading as a new valid reading.
-    valid = false;
-    pct = 0;
-    return false;
-  }
-
-  // A stable, in-range reading is accepted.
-  railCount = 0;
-
-  int span = rawDry - rawWet;
-
+  int span = s.rawDry - s.rawWet;
   if (span == 0) {
-    valid = false;
-    pct = 0;
-    return false;
+    s.connected = false;
+    s.valid = false;
+    s.pct = 0;
+    s.haveSmooth = false;
+    return;
   }
 
-  long mapped =
-      ((long)(rawDry - raw) * 100L) / span;
+  float target = ((float)(s.rawDry - raw) * 100.0f) / (float)span;
+  if (target < 0.0f)   target = 0.0f;
+  if (target > 100.0f) target = 100.0f;
 
-  pct = (int)constrain(mapped, 0L, 100L);
-  valid = true;
+  if (!s.haveSmooth) {
+    s.smooth = target;
+    s.haveSmooth = true;
+  } else {
+    s.smooth += SOIL_SMOOTH_ALPHA * (target - s.smooth);
+  }
 
-  return true;
+  s.pct = (int)(s.smooth + 0.5f);
+  s.connected = true;
+  s.valid = true;
 }
 
-void readSensors() {
-  // --- DHT11 --- a single failed read is normal; only call it
-  // disconnected after several in a row. Out-of-range values are rejected
-  // because the server answers HTTP 400 to them (which would make the whole
-  // dashboard look offline).
+void readSensors(unsigned long now) {
+  // --- DHT11 ---
   float h = dht.readHumidity();
   float t = dht.readTemperature();
   bool dhtOk = !(isnan(h) || isnan(t)) && t >= -40.0f && t <= 80.0f && h >= 0.0f && h <= 100.0f;
@@ -1014,43 +1026,29 @@ void readSensors() {
     if (dhtFailCount >= DHT_FAIL_THRESHOLD) dhtConnected = false;
   }
 
-  // --- Two independent soil moisture sensors ---
-  soil1Connected = readSoilSensor(
-      SOIL1_PIN,
-      SOIL1_RAW_DRY,
-      SOIL1_RAW_WET,
-      soil1Pct,
-      soil1Valid,
-      soil1RailCount
-  );
+  // --- Soil sensors: frozen while the pump runs (and shortly after) ---
+  soilHeld = soilHoldActive(now);
+  if (!soilHeld) {
+    readSoilSensor(0);
+    readSoilSensor(1);
+  }
 
-  soil2Connected = readSoilSensor(
-      SOIL2_PIN,
-      SOIL2_RAW_DRY,
-      SOIL2_RAW_WET,
-      soil2Pct,
-      soil2Valid,
-      soil2RailCount
-  );
-
-  // Only connected sensors contribute to the control value.
+  soil1Connected = soil[0].connected;
+  soil2Connected = soil[1].connected;
   haveSoil = soil1Connected || soil2Connected;
 
+  int p1 = soil[0].pct;
+  int p2 = soil[1].pct;
+
   if (soil1Connected && soil2Connected) {
-    soilAvgPct = (soil1Pct + soil2Pct + 1) / 2;
-
-    soilCtlPct = (SOIL_CONTROL_MODE == 1)
-        ? min(soil1Pct, soil2Pct)
-        : soilAvgPct;
-
+    soilAvgPct = (p1 + p2 + 1) / 2;
+    soilCtlPct = (SOIL_CONTROL_MODE == 1) ? min(p1, p2) : soilAvgPct;
   } else if (soil1Connected) {
-    soilAvgPct = soil1Pct;
-    soilCtlPct = soil1Pct;
-
+    soilAvgPct = p1;
+    soilCtlPct = p1;
   } else if (soil2Connected) {
-    soilAvgPct = soil2Pct;
-    soilCtlPct = soil2Pct;
-
+    soilAvgPct = p2;
+    soilCtlPct = p2;
   } else {
     soilAvgPct = 0;
     soilCtlPct = 0;
@@ -1067,11 +1065,9 @@ void changeState(bool &state, bool next, unsigned long &changedAt, unsigned long
   }
 }
 
-// One exhaust fan: ON at/above onC, OFF at/below offC, forced OFF without a
-// temperature reading.
 void runFan(bool &fanState, unsigned long &changedAt, float onC, float offC, unsigned long now) {
   if (!dhtConnected) {
-    changeState(fanState, false, changedAt, now);            // fail-safe, immediate
+    changeState(fanState, false, changedAt, now);
     return;
   }
   bool want = fanState;
@@ -1082,20 +1078,18 @@ void runFan(bool &fanState, unsigned long &changedAt, float onC, float offC, uns
   }
 }
 
-void runAutomation(unsigned long now) {
-  // ---- Exhaust fans <- temperature ----
-  runFan(fan1On, fan1ChangedAt, TEMP_FAN1_ON_C, TEMP_FAN1_OFF_C, now);
-  runFan(fan2On, fan2ChangedAt, TEMP_FAN2_ON_C, TEMP_FAN2_OFF_C, now);
-
-  // ---- Pump <- soil moisture, with max-run + cooldown ----
+// AUTOMATIC pump logic (only used when the manual override is OFF).
+// Soil readings are frozen while the pump runs, so the pump works in pulses:
+// ON up to PUMP_MAX_RUN_MS, rest PUMP_COOLDOWN_MS, re-measure, repeat.
+void runPumpAuto(unsigned long now) {
   if (!haveSoil) {
     changeState(pumpOn, false, pumpChangedAt, now);          // fail-safe, immediate
     pumpInCooldown = false;
   } else if (pumpOn) {
     if (soilCtlPct >= SOIL_PUMP_OFF_PCT) {
-      changeState(pumpOn, false, pumpChangedAt, now);        // target reached, stop at once
+      changeState(pumpOn, false, pumpChangedAt, now);        // target reached (live readings only)
     } else if ((now - pumpChangedAt) >= (unsigned long)PUMP_MAX_RUN_MS) {
-      changeState(pumpOn, false, pumpChangedAt, now);        // ran long enough, let water soak in
+      changeState(pumpOn, false, pumpChangedAt, now);
       pumpInCooldown = true;
       pumpCooldownStart = now;
       Serial.println("[Brassica] Pump max run reached, resting.");
@@ -1104,11 +1098,50 @@ void runAutomation(unsigned long now) {
     if (pumpInCooldown && (now - pumpCooldownStart) >= (unsigned long)PUMP_COOLDOWN_MS) {
       pumpInCooldown = false;
     }
-    if (!pumpInCooldown && soilCtlPct <= SOIL_PUMP_ON_PCT &&
+    if (!pumpInCooldown && !soilHeld && soilCtlPct <= SOIL_PUMP_ON_PCT &&
         (now - pumpChangedAt) >= (unsigned long)MIN_RELAY_HOLD_MS) {
       changeState(pumpOn, true, pumpChangedAt, now);
     }
   }
+}
+
+void runAutomation(unsigned long now) {
+  static bool prevPumpOn = false;
+
+  // ---- Exhaust fans <- temperature ----
+  runFan(fan1On, fan1ChangedAt, TEMP_FAN1_ON_C, TEMP_FAN1_OFF_C, now);
+  runFan(fan2On, fan2ChangedAt, TEMP_FAN2_ON_C, TEMP_FAN2_OFF_C, now);
+
+  // ---- Manual override expires if the dashboard stops confirming it ----
+  if (manualRequested && (now - manualLastConfirm) >= (unsigned long)MANUAL_OVERRIDE_TIMEOUT_MS) {
+    manualRequested = false;
+    Serial.println("[Brassica] Manual pump override timed out (no confirmation), dropping it.");
+  }
+
+  // ---- Pump ----
+  if (manualRequested) {
+    // MANUAL: driven only by the dashboard. No soil logic, no max-run,
+    // no cooldown, no sensor fail-safe.
+    if (!pumpOn) Serial.println("[Brassica] Pump ON (manual override).");
+    changeState(pumpOn, true, pumpChangedAt, now);
+    pumpInCooldown = false;
+    manualWasActive = true;
+  } else if (manualWasActive) {
+    // Override just ended: stop the pump now, automation resumes on the next
+    // cycle (after MIN_RELAY_HOLD_MS and the soil settle time).
+    manualWasActive = false;
+    changeState(pumpOn, false, pumpChangedAt, now);
+    pumpInCooldown = false;
+    Serial.println("[Brassica] Manual override ended, pump OFF, automatic control resumes.");
+  } else {
+    runPumpAuto(now);
+  }
+
+  // Remember when the pump stopped (starts the soil settle time).
+  if (prevPumpOn && !pumpOn) {
+    pumpStoppedAt = (now == 0) ? 1 : now;
+  }
+  prevPumpOn = pumpOn;
 
   writeAllRelays();
 }
@@ -1116,8 +1149,6 @@ void runAutomation(unsigned long now) {
 // ---------------------------------------------------------------------------
 // Reporting to the dashboard
 // ---------------------------------------------------------------------------
-// Builds ONE valid JSON object. (v5.2 closed the object and then appended the
-// Wi-Fi list after it, which the server rejected with HTTP 400 every time.)
 String buildPayload(bool wantCtl, bool wantLog) {
   String p;
   p.reserve(1800);
@@ -1126,8 +1157,8 @@ String buildPayload(bool wantCtl, bool wantLog) {
     p += "\"temperature\":" + String(temperatureC, 1) + ",";
     p += "\"humidity\":" + String(humidityPct, 1) + ",";
   }
-  if (soil1Connected) p += "\"soil_1\":" + String(soil1Pct) + ",";
-  if (soil2Connected) p += "\"soil_2\":" + String(soil2Pct) + ",";
+  if (soil1Connected) p += "\"soil_1\":" + String(soil[0].pct) + ",";
+  if (soil2Connected) p += "\"soil_2\":" + String(soil[1].pct) + ",";
   if (haveSoil)       p += "\"soil_moisture\":" + String(soilAvgPct) + ",";
   p += String("\"dht_connected\":")   + (dhtConnected   ? "true" : "false") + ",";
   p += String("\"soil1_connected\":") + (soil1Connected ? "true" : "false") + ",";
@@ -1135,6 +1166,10 @@ String buildPayload(bool wantCtl, bool wantLog) {
   p += String("\"fan\":\"")        + (fan1On  ? "ON" : "OFF") + "\",";
   p += String("\"fan2\":\"")       + (fan2On  ? "ON" : "OFF") + "\",";
   p += String("\"water_pump\":\"") + (pumpOn  ? "ON" : "OFF") + "\",";
+#if REPORT_EXTRA_FIELDS
+  p += String("\"pump_override\":") + (manualRequested ? "true" : "false") + ",";
+  p += String("\"soil_hold\":")     + (soilHeld        ? "true" : "false") + ",";
+#endif
   if (WiFi.status() == WL_CONNECTED) {
     p += "\"wifi_ssid\":\"" + jsonEscape(WiFi.SSID()) + "\",";
     p += "\"ip\":\"" + WiFi.localIP().toString() + "\",";
@@ -1153,9 +1188,25 @@ String buildPayload(bool wantCtl, bool wantLog) {
   return p;
 }
 
-// Reads the server's reply: an optional Wi-Fi change request and scan request.
+// Reads the server's reply: manual pump override, scan request, Wi-Fi change request.
 void handleReply(const String& body) {
   if (jsonBoolTrue(body, "scan")) scanRequested = true;
+
+  // --- Manual pump override ---
+  // The server must answer  "pump_override": true  while the dashboard's
+  // override button is ON and  false  when it is OFF.
+  int ov = jsonBoolValue(body, "pump_override");
+  if (ov < 0) ov = jsonBoolValue(body, "manual_pump");
+  if (ov < 0) ov = jsonBoolValue(body, "pump_manual");
+  if (ov >= 0) {
+    bool want = (ov == 1);
+    manualLastConfirm = millis();                 // every reply that carries the key re-confirms it
+    if (want != manualRequested) {
+      manualRequested = want;
+      manualDirty = true;                         // apply immediately
+      Serial.printf("[Brassica] Dashboard manual pump override: %s\n", want ? "ON" : "OFF");
+    }
+  }
 
   int w = body.indexOf("\"wifi_config\"");
   if (w < 0) return;
@@ -1171,7 +1222,7 @@ void handleReply(const String& body) {
     Serial.println("[Brassica] Ignoring a malformed Wi-Fi request from the dashboard.");
     return;
   }
-  if (trialActive || id == handledId) return;      // already working on / finished this one
+  if (trialActive || id == handledId) return;
 
   pendId = id;
   pendSsid = ssid;
@@ -1194,10 +1245,11 @@ bool postReading() {
   unsigned long nowMs = millis();
   bool sentNetworks = networksFresh;
   bool sentAck = (ackId.length() > 0);
-  // Ask for pending dashboard commands (Wi-Fi change / rescan) only now and then,
-  // and add a history row only every few minutes: this keeps the database traffic
-  // low enough for a free Redis plan.
-  bool sentCtl = !ctlEverSent || sentAck || trialActive || (nowMs - lastCtlOkAt >= ctlIntervalMs());
+  // Ask for dashboard commands only now and then, EXCEPT while the manual pump
+  // override is active: then every post asks, so the override is re-confirmed
+  // (and can be switched off) as fast as possible.
+  bool sentCtl = !ctlEverSent || sentAck || trialActive || manualRequested ||
+                 (nowMs - lastCtlOkAt >= ctlIntervalMs());
   bool sentLog = !logEverSent || (nowMs - lastLogOkAt >= (unsigned long)HISTORY_LOG_INTERVAL_MS);
   String payload = buildPayload(sentCtl, sentLog);
 
@@ -1207,12 +1259,12 @@ bool postReading() {
   url += UPDATE_PATH;
 
   HTTPClient http;
-  WiFiClientSecure secureClient;   // fresh client every post (reusing one goes stale on ESP32)
+  WiFiClientSecure secureClient;
   WiFiClient plainClient;
   bool began;
 
   if (srvTls) {
-    secureClient.setInsecure();    // no certificate validation: simplest for a hobby device
+    secureClient.setInsecure();
     began = http.begin(secureClient, url);
   } else {
     began = http.begin(plainClient, url);
@@ -1261,7 +1313,7 @@ bool postReading() {
   if (ok) {
     if (sentNetworks) networksFresh = false;
     if (sentAck) {
-      if (trialActive && ackStatus == "ok") commitTrial();   // the dashboard confirmed it: keep the new network
+      if (trialActive && ackStatus == "ok") commitTrial();
       ackId = "";
       ackStatus = "";
       ackSsid = "";
@@ -1282,11 +1334,15 @@ void printStatus() {
   if (dhtConnected) Serial.printf("Temp: %.1fC  Hum: %.0f%%\n", temperatureC, humidityPct);
   else              Serial.println("Temp: OFFLINE  Hum: OFFLINE");
 
-  if (soil1Connected) Serial.printf("Soil 1: %d%%", soil1Pct); else Serial.print("Soil 1: OFFLINE");
-  if (soil2Connected) Serial.printf("   Soil 2: %d%%\n", soil2Pct); else Serial.println("   Soil 2: OFFLINE");
+  // raw values are what you need for calibration (SOILx_RAW_DRY / SOILx_RAW_WET)
+  for (int i = 0; i < 2; i++) {
+    if (soil[i].connected) Serial.printf("Soil %d: %d%%  (raw %d)%s\n", i + 1, soil[i].pct, soil[i].raw, soilHeld ? "  [held]" : "");
+    else                   Serial.printf("Soil %d: OFFLINE  (raw %d)\n", i + 1, soil[i].raw);
+  }
 
-  Serial.printf("Pump: %s  Fan 1: %s  Fan 2: %s%s\n",
-                pumpOn ? "ON" : "off", fan1On ? "ON" : "off", fan2On ? "ON" : "off",
+  Serial.printf("Pump: %s%s  Fan 1: %s  Fan 2: %s%s\n",
+                pumpOn ? "ON" : "off", manualRequested ? " (MANUAL)" : "",
+                fan1On ? "ON" : "off", fan2On ? "ON" : "off",
                 pumpInCooldown ? "  (pump resting)" : "");
   if (WiFi.status() == WL_CONNECTED) Serial.printf("WiFi: %s  RSSI %d dBm\n", WiFi.localIP().toString().c_str(), (int)WiFi.RSSI());
   else                               Serial.println("WiFi: disconnected");
