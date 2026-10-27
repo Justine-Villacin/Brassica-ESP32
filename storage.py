@@ -223,10 +223,21 @@ def record_update(fields, history_row=None):
 # ---------------------------------------------------------------------------
 
 def _auto_seed_history_sync(client):
-    """Guaranteed synchronous seeding if history list is completely empty."""
+    """Guaranteed synchronous seeding: populates history if empty or invalid."""
     try:
-        if client.llen(KEY_HISTORY) > 0:
-            return  # Already populated
+        # Check existing items
+        raw_count = client.llen(KEY_HISTORY)
+        if raw_count > 0:
+            # Check if the list actually contains valid JSON rows or is just noise
+            sample = client.lrange(KEY_HISTORY, 0, 0)
+            if sample and sample[0]:
+                try:
+                    json.loads(sample[0])
+                    return  # Already populated with valid data
+                except (TypeError, ValueError):
+                    pass  # Corrupted data found, clear and re-seed
+            # Clear corrupted/empty key
+            client.delete(KEY_HISTORY)
 
         start_date = datetime(2026, 10, 19, 0, 0, 0)
         end_date = datetime(2026, 10, 26, 23, 55, 0)
@@ -262,8 +273,8 @@ def _auto_seed_history_sync(client):
             print(f"[storage] Successfully auto-seeded {len(history_list)} records into Redis!")
     except Exception as exc:
         print(f"[storage] Auto-seed sync error: {exc}")
-
-
+        
+        
 def get_history():
     if REDIS_URL:
         def _fetch_history(client):
