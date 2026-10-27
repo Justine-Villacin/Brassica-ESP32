@@ -175,6 +175,8 @@ async function loadHistoricalData() {
 
         if (data.status === "success" && data.history.length > 0) {
             // Days with no readings come back as "--": never print "--%" or "--°".
+            const note = document.getElementById("historyModalNote");
+            if (note) note.textContent = data.demo ? "Daily summary (includes sample data)" : "Daily environmental metric summary";
             const fmt = (v, unit) => (v === "--" || v === null || v === undefined) ? "--" : `${v}${unit}`;
 
             const recentList = document.querySelector(".panel-strip .history-list");

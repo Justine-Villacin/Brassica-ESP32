@@ -14,8 +14,10 @@ import csv
 import hmac
 import io
 import json
+import math
 import os
 import queue
+import random
 import secrets
 import threading
 import time
@@ -57,6 +59,9 @@ PUMP_PIN_MAX_TRIES = 5          # wrong PINs before a lockout
 PUMP_PIN_LOCK_SECONDS = 300     # lockout length (5 min)
 
 ON_VERCEL = bool(os.environ.get("VERCEL"))
+
+# Presentation mode: fills days that have no real readings with sample data.
+DEMO_DATA = os.environ.get("BRASSICA_DEMO_DATA", "false").strip().lower() in ("1", "true", "yes", "on")
 
 
 def _load_timezone():
@@ -336,6 +341,7 @@ def api_status():
         "api_key_required": bool(API_KEY),
         "admin_pin_required": bool(ADMIN_PIN),
         "pump_pin_required": bool(PUMP_PIN),
+        "demo_data": DEMO_DATA,
         "esp32_connected": connected,
         "disconnect_timeout_seconds": storage.DISCONNECT_TIMEOUT_SECONDS,
     })
@@ -675,7 +681,74 @@ def _history_rows_from_local_csv():
             rows.append(row[:len(CSV_HEADERS)])
     return rows
 
-def _resolve_history_rows():
+# ---------------------------------------------------------------------------
+# DEMO / SAMPLE DATA (presentation mode). Set BRASSICA_DEMO_DATA=true.
+# Fills every day of the 7-day window that has NO real readings with smooth,
+# believable greenhouse data. Nothing is written to the database; real
+# readings always win for the days they cover. Delete the variable to turn
+# it off. Values follow the firmware rules: fan ON at >= 30 C, pump pulses
+# when the driest soil sensor drops to 60 %.
+# ---------------------------------------------------------------------------
+def _demo_day_rows(day, upto=None):
+    rnd = random.Random(day.isoformat())          # same day -> same data, always
+    shift = rnd.uniform(-0.5, 0.5)                # this whole day a bit warmer/cooler
+    peak, low = 31.0 + shift, 25.6 + shift * 0.6
+    s1, s2 = 75 + rnd.uniform(-2, 2), 78 + rnd.uniform(-2, 2)
+    ramp, target1, target2 = 0, 0.0, 0.0
+    rows = []
+    for i in range(288):                          # one row every 5 min, like the ESP32
+        ts = datetime(day.year, day.month, day.day) + timedelta(minutes=5 * i)
+        if upto is not None and ts > upto:
+            break
+        hour = i * 5 / 60
+        raw = (peak + low) / 2 + (peak - low) / 2 * math.cos((hour - 14) / 24 * 2 * math.pi)
+        raw += rnd.uniform(-0.12, 0.12)
+
+        fan = raw >= 30.0                         # exhaust fan rule from config.h
+        temp = 30.0 + (raw - 30.0) * 0.45 if fan else raw
+        hum = min(88.0, max(56.0, 108.0 - 1.5 * temp + rnd.uniform(-0.4, 0.4)))
+
+        pump = False
+        if ramp > 0:                              # water soaking in after a pump run
+            ramp -= 1
+            s1 += (target1 - s1) / (ramp + 1)
+            s2 += (target2 - s2) / (ramp + 1)
+        else:
+            rate = 1.1 + 0.35 * max(0.0, temp - 26.0)        # % per hour, faster when hot
+            s1 -= rate * 5 / 60 + rnd.uniform(0.0, 0.12)
+            s2 -= rate * 0.92 * 5 / 60 + rnd.uniform(0.0, 0.12)
+            if min(s1, s2) <= 60.5:               # automatic pump rule (driest sensor)
+                pump = True
+                ramp = 3
+                target1 = 73 + rnd.uniform(-2, 2)
+                target2 = target1 + 3 + rnd.uniform(-1, 1)
+
+        rows.append([
+            ts.strftime("%Y-%m-%d %H:%M:%S"),
+            round(temp, 1), round(hum, 1),
+            float(round(s1)), float(round(s2)),
+            pump, fan,
+        ])
+    return rows
+
+
+def _with_demo_rows(rows):
+    """Adds sample rows for window days that have no real readings."""
+    now_local = datetime.now(LOCAL_TZ).replace(tzinfo=None)
+    today = now_local.date()
+    real_days = {str(r[0])[:10] for r in (rows or []) if r}
+    extra = []
+    for back in range(6, -1, -1):
+        day = today - timedelta(days=back)
+        if day.isoformat() in real_days:
+            continue
+        extra += _demo_day_rows(day, upto=now_local if day == today else None)
+    if not extra:
+        return rows, False
+    return sorted((rows or []) + extra, key=lambda r: str(r[0])), True
+
+
+def _resolve_real_history_rows():
     """Returns (rows, source); source is None if there is nothing to export."""
     # On Vercel, NEVER check local CSV files — go straight to cloud Redis/store.
     if not ON_VERCEL:
@@ -692,6 +765,17 @@ def _resolve_history_rows():
         return [], storage.backend_name()
 
     return None, None
+
+
+def _resolve_history_rows():
+    """Real history, plus sample days when BRASSICA_DEMO_DATA is on."""
+    rows, source = _resolve_real_history_rows()
+    if not DEMO_DATA:
+        return rows, source
+    rows, added = _with_demo_rows(rows)
+    if added:
+        return rows, f"demo+{source}" if source else "demo"
+    return rows, source
 
 
 @app.route("/sensor_data.csv")
@@ -763,7 +847,8 @@ def api_history():
     readings is still listed, with "--" values."""
     rows, _source = _resolve_history_rows()
     if not rows:
-        return jsonify({"status": "success", "history": []})
+        return jsonify({"status": "success", "history": [], "demo": False})
+    is_demo = bool(_source) and str(_source).startswith("demo")
 
     daily = {}
     for r in rows:
@@ -823,7 +908,7 @@ def api_history():
             "soil2": round(sum(b["s2"]) / len(b["s2"]), 1) if b["s2"] else "--",
         })
 
-    return jsonify({"status": "success", "history": history})
+    return jsonify({"status": "success", "history": history, "demo": is_demo})
 
 @app.route("/api/activity")
 def api_activity():
