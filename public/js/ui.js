@@ -97,7 +97,7 @@ export function updateSensorUI(data) {
         }
     }
 
-    // ----- Soil 1 -----
+    // ----- Soil 1 (Ideal: 60 - 80) -----
     const soil1Ok = !!data.soil1Connected && data.soil !== null && data.soil !== undefined;
     if (soilEl) {
         if (!soil1Ok) {
@@ -109,13 +109,21 @@ export function updateSensorUI(data) {
         } else {
             soilEl.textContent = Math.round(data.soil);
             if (soilStatus) {
-                soilStatus.textContent = data.soil <= 40 ? "LOW" : "GOOD";
-                soilStatus.style.color = data.soil <= 40 ? "var(--danger)" : "var(--primary)";
+                if (data.soil < 60) {
+                    soilStatus.textContent = "LOW";
+                    soilStatus.style.color = "var(--danger)";
+                } else if (data.soil > 80) {
+                    soilStatus.textContent = "HIGH";
+                    soilStatus.style.color = "var(--warning)";
+                } else {
+                    soilStatus.textContent = "GOOD";
+                    soilStatus.style.color = "var(--primary)";
+                }
             }
         }
     }
 
-    // ----- Soil 2 -----
+    // ----- Soil 2 (Ideal: 60 - 80) -----
     const soil2Ok = !!data.soil2Connected && data.soil2 !== null && data.soil2 !== undefined;
     if (soil2El) {
         if (!soil2Ok) {
@@ -127,8 +135,16 @@ export function updateSensorUI(data) {
         } else {
             soil2El.textContent = Math.round(data.soil2);
             if (soil2Status) {
-                soil2Status.textContent = data.soil2 <= 40 ? "LOW" : "GOOD";
-                soil2Status.style.color = data.soil2 <= 40 ? "var(--danger)" : "var(--primary)";
+                if (data.soil2 < 60) {
+                    soil2Status.textContent = "LOW";
+                    soil2Status.style.color = "var(--danger)";
+                } else if (data.soil2 > 80) {
+                    soil2Status.textContent = "HIGH";
+                    soil2Status.style.color = "var(--warning)";
+                } else {
+                    soil2Status.textContent = "GOOD";
+                    soil2Status.style.color = "var(--primary)";
+                }
             }
         }
     }
@@ -145,8 +161,7 @@ export function updateSensorUI(data) {
     }
 
     if (data.soilConnected) {
-        if (data.soil <= 40) score -= 35;
-        else if (data.soil > 85) score -= 10;
+        if (data.soil < 60 || data.soil > 80) score -= 35;
     } else {
         score -= 35;
     }

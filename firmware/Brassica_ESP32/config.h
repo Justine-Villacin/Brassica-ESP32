@@ -86,7 +86,7 @@
 #define SOIL1_RAW_DRY         3300
 #define SOIL1_RAW_WET         2000
 #define SOIL2_RAW_DRY         3000
-#define SOIL2_RAW_WET         400
+#define SOIL2_RAW_WET         480
 
 // ============================================================
 // Soil reading quality
@@ -123,8 +123,8 @@
 #define TEMP_FAN2_OFF_C        29.9   // fan 2 OFF at/below this
 
 // Pump (soil moisture) — AUTOMATIC mode only.
-#define SOIL_PUMP_ON_PCT        39    // pump ON at/below this
-#define SOIL_PUMP_OFF_PCT       55    // pump OFF at/above this
+#define SOIL_PUMP_ON_PCT        60    // pump ON at/below this
+#define SOIL_PUMP_OFF_PCT       80    // pump OFF at/above this
 // NOTE: because the soil reading is frozen while the pump runs, the automatic
 // pump works in PULSES: ON for up to PUMP_MAX_RUN_MS, then rest for
 // PUMP_COOLDOWN_MS while the water soaks in, then it measures again and
@@ -176,13 +176,13 @@
 // How often a reading is sent to the dashboard.
 //   Hosted (HTTPS, e.g. Vercel): every 10 s (keeps the free Redis plan under quota).
 //   Local (plain HTTP to desktop.py): every 3 s.
-#define SERVER_POST_INTERVAL_HOSTED_MS   10000
-#define SERVER_POST_INTERVAL_LOCAL_MS     3000
+#define SERVER_POST_INTERVAL_HOSTED_MS   5000
+#define SERVER_POST_INTERVAL_LOCAL_MS     2000
 
 // How often the ESP32 asks the server for pending commands (Wi-Fi change /
 // rescan). While the manual pump override is active it asks on EVERY post.
-#define CTL_CHECK_INTERVAL_HOSTED_MS     30000
-#define CTL_CHECK_INTERVAL_LOCAL_MS       6000
+#define CTL_CHECK_INTERVAL_HOSTED_MS     10000   // 10 s
+#define CTL_CHECK_INTERVAL_LOCAL_MS       3000   // 3 s
 
 // How often a row is added to the history (CSV export / 7-day averages).
 #define HISTORY_LOG_INTERVAL_MS         300000
