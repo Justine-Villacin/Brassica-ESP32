@@ -375,6 +375,23 @@
     </div>
 </div>
 
+<!-- PUMP PIN MODAL (logic in /js/main.js, "Manual Overrides") -->
+<div id="pumpPinModal" class="modal" style="display:none;">
+    <div class="modal-card" style="max-width: 340px; text-align: left; padding: 24px;">
+        <h4 style="margin: 0; display: flex; align-items: center; gap: 8px; font-size: 18px;">
+            <i class="ph-fill ph-lock-key" style="color: var(--primary);"></i> Enter PIN
+        </h4>
+        <p style="font-size: 12px; color: var(--text-muted); margin: 6px 0 14px;">A PIN is needed to turn the water pump ON manually. Turning it OFF needs no PIN.</p>
+        <input type="password" id="pumpPinInput" class="wifi-input" placeholder="PIN" autocomplete="off" maxlength="64"
+               onkeydown="if (event.key === 'Enter') submitPumpPin()">
+        <div id="pumpPinError" class="wifi-line" style="margin: 10px 0 0; min-height: 16px;"></div>
+        <div class="wifi-buttons" style="margin-top: 12px;">
+            <button type="button" class="control-btn" style="background: rgba(255,255,255,0.05);" onclick="closePumpPinModal()">Cancel</button>
+            <button type="button" id="pumpPinBtn" class="control-btn" style="background: var(--primary); color: #000;" onclick="submitPumpPin()">Turn ON</button>
+        </div>
+    </div>
+</div>
+
 <!-- iOS "Add to Home Screen" instructions modal -->
 <div id="iosInstallModal" class="modal" style="display:none;">
     <div class="modal-card">

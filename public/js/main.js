@@ -85,6 +85,7 @@ function render(data) {
 
 function handleData(data) {
     storageWarning = data.storageWarning || null;
+    if (typeof data.pumpPinRequired === "boolean") window.__pumpPinRequired = data.pumpPinRequired;
 
     if (data.esp32Connected) {
         offlinePolls = 0;
@@ -298,29 +299,92 @@ window.closeHistoryModal = function () {
 // ---------------------------------------------------------------------------
 // Manual Overrides
 // ---------------------------------------------------------------------------
-window.togglePump = async function() {
-    const toggle = document.getElementById("manualPumpBtn");
-    const newState = toggle.checked; 
-    
-    toggle.disabled = true;
+const pumpEl = () => document.getElementById("manualPumpBtn");
+const toast = (msg, kind) => { if (window.logActivity) window.logActivity(msg, kind); };
 
+// Sends the pump command. ON needs the PIN (checked by the server); OFF never does.
+// On success the switch moves to the new state; on any failure it stays where it really is.
+async function applyPump(newState, pin) {
+    const toggle = pumpEl();
+    toggle.disabled = true;
     try {
         const res = await fetch("/api/control", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ target: "pump", state: newState })
+            body: JSON.stringify({ target: "pump", state: newState, pin })
         });
-        
+        let body = null;
+        try { body = await res.json(); } catch (_) { /* non-JSON error page */ }
+
         if (res.ok) {
-            if(window.logActivity) window.logActivity(`Pump manually turned ${newState ? "ON" : "OFF"}`, "success");
-        } else {
-            throw new Error("Server rejected command");
+            toggle.checked = newState;
+            toast(`Pump manually turned ${newState ? "ON" : "OFF"}`, "success");
+            return { ok: true };
         }
+        toggle.checked = !newState;
+        const message = (body && body.message) || "Server rejected command";
+        if (res.status !== 403 && res.status !== 429) toast("Failed to send pump command", "danger");
+        return { ok: false, status: res.status, message };
     } catch (err) {
         console.warn("Manual override failed:", err);
-        if(window.logActivity) window.logActivity("Failed to send pump command", "danger");
-        toggle.checked = !newState; // Revert visually if there's an error
+        toggle.checked = !newState;
+        toast("Failed to send pump command", "danger");
+        return { ok: false, status: 0, message: "Could not reach the server." };
     } finally {
         toggle.disabled = false;
+    }
+}
+
+window.togglePump = async function () {
+    const toggle = pumpEl();
+    const wantOn = toggle.checked;
+
+    if (!wantOn) {                       // turning OFF: no PIN, apply immediately
+        await applyPump(false, "");
+        return;
+    }
+    toggle.checked = false;              // the switch only moves once the PIN is accepted
+    if (window.__pumpPinRequired === false) {
+        await applyPump(true, "");       // server says no PIN is configured
+    } else {
+        window.openPumpPinModal();
+    }
+};
+
+window.openPumpPinModal = function () {
+    const input = document.getElementById("pumpPinInput");
+    document.getElementById("pumpPinError").textContent = "";
+    input.value = "";
+    document.getElementById("pumpPinModal").style.display = "flex";
+    input.focus();
+};
+
+window.closePumpPinModal = function () {
+    document.getElementById("pumpPinInput").value = "";
+    document.getElementById("pumpPinModal").style.display = "none";
+};
+
+window.submitPumpPin = async function () {
+    const input = document.getElementById("pumpPinInput");
+    const errorEl = document.getElementById("pumpPinError");
+    const btn = document.getElementById("pumpPinBtn");
+    const pin = input.value;
+
+    errorEl.style.color = "var(--danger)";
+    if (!pin) { errorEl.textContent = "Enter the PIN."; return; }
+
+    btn.disabled = true;
+    errorEl.style.color = "var(--text-muted)";
+    errorEl.textContent = "Checking...";
+    const result = await applyPump(true, pin);
+    btn.disabled = false;
+
+    if (result.ok) {
+        window.closePumpPinModal();
+    } else {
+        errorEl.style.color = "var(--danger)";
+        errorEl.textContent = result.message;
+        input.value = "";
+        input.focus();
     }
 };

@@ -2,6 +2,11 @@ export function updateAutomationUI(data) {
     // --- Manual Pump Button Sync ---
     const manualPumpBtn = document.getElementById("manualPumpBtn");
     if (manualPumpBtn) {
+        // Keep the switch in step with the server (e.g. after a page reload),
+        // but never while a request is in flight.
+        if (!manualPumpBtn.disabled) {
+            manualPumpBtn.checked = !!(data.manualPumpActive && data.manualPumpOn);
+        }
         if (data.pump) {
             manualPumpBtn.setAttribute("data-state", "on");
             manualPumpBtn.textContent = "Turn OFF";

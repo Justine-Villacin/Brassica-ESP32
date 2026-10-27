@@ -49,6 +49,13 @@ API_KEY = os.environ.get("BRASSICA_API_KEY") or None
 # network can be changed from the website.
 ADMIN_PIN = os.environ.get("BRASSICA_ADMIN_PIN") or None
 
+# PIN required to turn the MANUAL PUMP ON from the dashboard (turning it OFF
+# never needs a PIN). Falls back to BRASSICA_ADMIN_PIN when not set. If both
+# are unset the pump button stays open, like before.
+PUMP_PIN = os.environ.get("BRASSICA_PUMP_PIN") or ADMIN_PIN
+PUMP_PIN_MAX_TRIES = 5          # wrong PINs before a lockout
+PUMP_PIN_LOCK_SECONDS = 300     # lockout length (5 min)
+
 ON_VERCEL = bool(os.environ.get("VERCEL"))
 
 
@@ -138,6 +145,18 @@ def _check_pin(body):
     if isinstance(body, dict):
         supplied = str(body.get("pin") or "")
     return hmac.compare_digest(supplied.encode("utf-8"), ADMIN_PIN.encode("utf-8"))
+
+
+def _pump_pin_failed(rec):
+    """Counts a wrong pump PIN in Redis (so it works across Vercel instances)
+    and starts a lockout after PUMP_PIN_MAX_TRIES wrong tries."""
+    count = int(rec.get("count", 0)) + 1
+    until = 0
+    if count >= PUMP_PIN_MAX_TRIES:
+        until = time.time() + PUMP_PIN_LOCK_SECONDS
+        count = 0
+    storage.kv_set("pump_pin_fail", {"count": count, "until": until},
+                   ttl=PUMP_PIN_LOCK_SECONDS + 600)
 
 
 def _parse_json_body():
@@ -297,6 +316,7 @@ def api_sensors():
     override = storage.kv_get_many(["manual_pump"])["manual_pump"]
     out["manualPumpActive"] = override is not None
     out["manualPumpOn"] = bool(override.get("state")) if override else False
+    out["pumpPinRequired"] = bool(PUMP_PIN)
     return jsonify(out)
 
 
@@ -315,6 +335,7 @@ def api_status():
         "dev_mode": DEV_MODE,
         "api_key_required": bool(API_KEY),
         "admin_pin_required": bool(ADMIN_PIN),
+        "pump_pin_required": bool(PUMP_PIN),
         "esp32_connected": connected,
         "disconnect_timeout_seconds": storage.DISCONNECT_TIMEOUT_SECONDS,
     })
@@ -334,6 +355,23 @@ def api_control():
         return jsonify({"status": "error", "message": f"unsupported target '{target}'"}), 400
 
     state = _as_bool(data.get("state"), False)
+
+    # Turning the pump ON needs the PIN (checked here, on the server, so it
+    # cannot be skipped from the browser). Turning it OFF is always allowed:
+    # stopping the pump is the safe direction.
+    if state and PUMP_PIN:
+        rec = storage.kv_get_many(["pump_pin_fail"])["pump_pin_fail"] or {}
+        left = int(rec.get("until", 0) - time.time())
+        if left > 0:
+            mins = max(1, (left + 59) // 60)
+            return jsonify({"status": "error",
+                            "message": f"Too many wrong PINs. Try again in {mins} min."}), 429
+        supplied = str(data.get("pin") or "")
+        if not hmac.compare_digest(supplied.encode("utf-8"), PUMP_PIN.encode("utf-8")):
+            _pump_pin_failed(rec)
+            return jsonify({"status": "error", "message": "Wrong PIN."}), 403
+        if rec.get("count") or rec.get("until"):
+            storage.kv_set("pump_pin_fail", {"count": 0, "until": 0}, ttl=60)
 
     # Store the override so /update can echo it back to the ESP32 on every
     # post. 180 s TTL: the ESP32 re-confirms roughly every 10 s while the
