@@ -1,37 +1,5 @@
 """
-storage.py — shared state store for Brassica.
-
-Why this exists
----------------
-On Vercel, app.py runs as a serverless function: every request can land on a
-different instance with no memory of the last one, so readings must live in
-an external store (Redis). This module gives app.py one small surface:
-
-  * REDIS_URL (or KV_URL) set  -> everything is read/written through Redis.
-  * nothing set                -> a plain in-memory store, which is perfect
-                                  for `python desktop.py` on your PC.
-
-v6.0 changes (these fix the "dashboard keeps going on/off" problem):
-
-  * When Redis IS configured, the app never silently switches to a private
-    per-instance memory dict any more. The old code cached "Redis failed"
-    forever on the instance that hit one slow ping, so different instances
-    ended up showing different data and the dashboard flickered. Now a
-    failure is reported (HTTP 503 to the ESP32, which simply retries) and the
-    connection is retried on the next request.
-  * Reads fall back to the last good copy held by *this* instance if Redis
-    has a short hiccup, so one bad request cannot blank the dashboard.
-  * Live state is a Redis hash that is updated with ONE atomic command, so
-    the dashboard, the ESP32 and the Wi-Fi setup routes can no longer
-    overwrite each other's data (the old read-modify-write lost updates).
-  * The ESP32 "disconnected" timeout is 35 s (was 8 s). On Vercel the
-    firmware posts every 10 s and a cold start + TLS handshake can take
-    several seconds, so 8 s flagged healthy devices as offline.
-  * Redis traffic is kept deliberately small. The free Upstash plan that
-    Vercel offers allows 500,000 commands a month; once it is used up the
-    database refuses requests and the dashboard would flicker for the rest of
-    the month. An ESP32 post costs ONE command (plus a history row every
-    5 minutes), and a dashboard refresh costs one.
+storage.py — shared state store for Brassica (Serverless & Desktop safe).
 """
 
 import json
@@ -44,10 +12,7 @@ from collections import deque
 # Configuration
 # ---------------------------------------------------------------------------
 
-
 def _normalise_redis_url(url):
-    """Upstash (the Redis behind Vercel's Marketplace) only accepts TLS. If a
-    plain redis:// URL for an upstash.io host is pasted in, upgrade it."""
     if url and url.startswith("redis://") and "upstash.io" in url:
         return "rediss://" + url[len("redis://"):]
     return url
@@ -59,12 +24,10 @@ REDIS_URL = _normalise_redis_url(
 ON_VERCEL = bool(os.environ.get("VERCEL"))
 
 PREFIX = "brassica:"
-KEY_LATEST = PREFIX + "latest"      # Redis hash: field -> JSON value
-KEY_HISTORY = PREFIX + "history"    # Redis list, newest first
-MAX_HISTORY = 2100                  # capped list length: 7 days of 5-minute samples (CSV/Excel exports)
+KEY_LATEST = PREFIX + "latest"
+KEY_HISTORY = PREFIX + "history"
+MAX_HISTORY = 2100
 
-# Seconds without a successful ESP32 /update before the dashboard calls the
-# device disconnected. Tune with BRASSICA_DISCONNECT_TIMEOUT.
 try:
     DISCONNECT_TIMEOUT_SECONDS = float(os.environ.get("BRASSICA_DISCONNECT_TIMEOUT", "35"))
 except ValueError:
@@ -90,7 +53,6 @@ DEFAULT_STATE = {
     "ip": "",
     "rssi": 0,
     "firmware": "",
-    # Internal bookkeeping (stripped before it reaches the browser).
     "_last_update_time": 0,
 }
 
@@ -100,12 +62,12 @@ class StorageError(Exception):
 
 
 # ---------------------------------------------------------------------------
-# Redis client (lazy; never touches the network at import time)
+# Redis client (lazy initialization)
 # ---------------------------------------------------------------------------
 
 _redis_client = None
 _redis_lock = threading.Lock()
-_last_error = None          # (message, unix_time) of the most recent failure
+_last_error = None
 _last_ok_time = 0.0
 
 
@@ -116,8 +78,7 @@ def _get_client():
     with _redis_lock:
         if _redis_client is None:
             try:
-                import redis  # imported lazily so a missing package can't crash app import
-
+                import redis
                 _redis_client = redis.from_url(
                     REDIS_URL,
                     decode_responses=True,
@@ -126,21 +87,18 @@ def _get_client():
                     retry_on_timeout=True,
                     health_check_interval=15,
                 )
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 raise StorageError(f"could not create Redis client: {exc}") from exc
         return _redis_client
 
 
 def _reset_client():
-    """Drop the cached client so the NEXT call builds a fresh connection."""
     global _redis_client
     with _redis_lock:
         _redis_client = None
 
 
 def _run(fn):
-    """Runs fn(client) against Redis, retrying once on a fresh connection.
-    Raises StorageError if both attempts fail. Never returns stale data."""
     global _last_error, _last_ok_time
     last_exc = None
     for attempt in range(2):
@@ -151,7 +109,7 @@ def _run(fn):
             return result
         except StorageError as exc:
             last_exc = exc
-        except Exception as exc:  # noqa: BLE001 - any redis/connection error
+        except Exception as exc:
             last_exc = exc
         _reset_client()
     _last_error = (str(last_exc), time.time())
@@ -160,54 +118,44 @@ def _run(fn):
 
 
 # ---------------------------------------------------------------------------
-# In-memory store (used only when REDIS_URL is NOT configured)
+# In-memory store (used when REDIS_URL is NOT configured)
 # ---------------------------------------------------------------------------
 
 _mem_lock = threading.Lock()
 _mem_latest = dict(DEFAULT_STATE)
 _mem_history = deque(maxlen=MAX_HISTORY)
-_mem_kv = {}                # name -> (json_string, expires_at or None)
+_mem_kv = {}
 
-# Last good copy of the live state served by THIS instance if Redis blips.
 _cache_lock = threading.Lock()
 _cache_latest = None
 
 
 # ---------------------------------------------------------------------------
-# Status helpers
+# Status helpers & state operations
 # ---------------------------------------------------------------------------
 
 def is_remote_configured():
-    """True if a Redis connection string is set (regardless of reachability)."""
     return bool(REDIS_URL)
 
 
 def backend_name():
-    """'redis' when Redis is configured, else 'memory'."""
     return "redis" if REDIS_URL else "memory"
 
 
 def last_error():
-    """(message, unix_time) of the most recent Redis failure, or None."""
     return _last_error
 
 
 def warning():
-    """A human-readable problem with the storage setup, or None if it's fine.
-    Shown as a banner on the dashboard so a bad setup is obvious."""
     if ON_VERCEL and not REDIS_URL:
         return ("Cloud storage is not set up. Add a Redis database in Vercel "
                 "(Storage tab) and redeploy, otherwise live data will keep "
-                "flickering on and off. See README.md, step 3.")
+                "flickering on and off.")
     if REDIS_URL and _last_error and (time.time() - _last_error[1]) < 60 \
             and _last_ok_time < _last_error[1]:
         return "The Redis database is not responding right now. Retrying..."
     return None
 
-
-# ---------------------------------------------------------------------------
-# Live state
-# ---------------------------------------------------------------------------
 
 def _decode_hash(raw):
     state = dict(DEFAULT_STATE)
@@ -220,9 +168,6 @@ def _decode_hash(raw):
 
 
 def get_latest():
-    """Returns the latest known state as a plain dict. If Redis is configured
-    but momentarily unreachable, returns this instance's last good copy (its
-    own timestamp makes it age out into 'disconnected' naturally)."""
     global _cache_latest
     if REDIS_URL:
         try:
@@ -241,7 +186,6 @@ def get_latest():
 
 
 def patch_latest(fields):
-    """Atomically merges `fields` into the live state (one Redis command)."""
     if REDIS_URL:
         mapping = {k: json.dumps(v) for k, v in fields.items()}
         _run(lambda c: c.hset(KEY_LATEST, mapping=mapping))
@@ -251,9 +195,6 @@ def patch_latest(fields):
 
 
 def record_update(fields, history_row=None):
-    """Used by POST /update: merges `fields` into the live state and, when
-    `history_row` is given, appends it to the history list - all in a single
-    Redis round-trip (one command for the state, two more for a history row)."""
     if REDIS_URL:
         mapping = {k: json.dumps(v) for k, v in fields.items()}
 
@@ -276,7 +217,6 @@ def record_update(fields, history_row=None):
 
 
 def get_history():
-    """Returns stored readings, oldest first, as a list of dicts."""
     if REDIS_URL:
         raw_rows = _run(lambda c: c.lrange(KEY_HISTORY, 0, MAX_HISTORY - 1))
         rows = []
@@ -285,15 +225,13 @@ def get_history():
                 rows.append(json.loads(raw))
             except (TypeError, ValueError):
                 continue
-        rows.reverse()  # oldest first, like a CSV
+        rows.reverse()
         return rows
     with _mem_lock:
         return list(reversed(_mem_history))
 
 
 def touch(now=None):
-    """Returns (state, connected). `connected` is computed at READ time from
-    `_last_update_time`, so no background thread is ever needed."""
     now = now if now is not None else time.time()
     state = get_latest()
     last_update = state.get("_last_update_time", 0) or 0
@@ -302,7 +240,7 @@ def touch(now=None):
 
 
 # ---------------------------------------------------------------------------
-# Small JSON key/value store (Wi-Fi setup commands, scan results, ...)
+# Key/Value store
 # ---------------------------------------------------------------------------
 
 def _kv_key(name):
@@ -310,7 +248,6 @@ def _kv_key(name):
 
 
 def kv_set(name, value, ttl=None):
-    """Stores any JSON-serialisable value; optional TTL in seconds."""
     data = json.dumps(value)
     if REDIS_URL:
         if ttl:
@@ -331,7 +268,6 @@ def kv_delete(name):
 
 
 def kv_get_many(names):
-    """Returns {name: value-or-None} using a single Redis round-trip."""
     names = list(names)
     out = {n: None for n in names}
     if REDIS_URL:
