@@ -39,6 +39,7 @@ import os
 import threading
 import time
 from collections import deque
+import pandas as pd
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -359,3 +360,45 @@ def kv_get_many(names):
 
 def kv_get(name):
     return kv_get_many([name])[name]
+
+
+# ---------------------------------------------------------------------------
+# Auto-seed history from local CSV on cloud boot
+# ---------------------------------------------------------------------------
+
+def _seed_history_to_redis_if_empty():
+    """Automatically seeds sensor_data.csv into Redis if the cloud history is empty."""
+    if not REDIS_URL:
+        return
+    try:
+        client = _get_client()
+        count = client.llen(KEY_HISTORY)
+        if count > 0:
+            return  # Already populated
+
+        csv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sensor_data.csv")
+        if not os.path.exists(csv_path):
+            return
+
+        df = pd.read_csv(csv_path)
+        history_list = []
+        for _, row in df.iterrows():
+            history_list.append({
+                "timestamp": str(row["Timestamp"]),
+                "temp": float(row["Temperature_C"]) if str(row["Temperature_C"]) != "ERR" else "ERR",
+                "hum": float(row["Humidity_pct"]) if str(row["Humidity_pct"]) != "ERR" else "ERR",
+                "soil1": float(row["Soil_1_pct"]) if str(row["Soil_1_pct"]) != "ERR" else "ERR",
+                "soil2": float(row["Soil_2_pct"]) if str(row["Soil_2_pct"]) != "ERR" else "ERR",
+                "pump": str(row["Pump_Active"]).lower() in ("true", "1", "on"),
+                "fan": str(row["Exhaust_Fan_Active"]).lower() in ("true", "1", "on")
+            })
+
+        if history_list:
+            json_rows = [json.dumps(row) for row in history_list]
+            client.rpush(KEY_HISTORY, *json_rows)
+            print(f"[storage] Successfully auto-seeded {len(history_list)} historical records into cloud Redis.")
+    except Exception as exc:
+        print(f"[storage] Failed to auto-seed history: {exc}")
+
+if ON_VERCEL and REDIS_URL:
+    threading.Thread(target=_seed_history_to_redis_if_empty, daemon=True).start()
