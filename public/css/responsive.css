@@ -1,275 +1,11 @@
+/* ===== responsive.css v10 ===== */
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 .bottom-nav { display: none; }
 
-/* Tablet / small laptop: still two columns, insights stack to save width */
-@media (max-width: 1200px) {
-    .dashboard-layout { grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); }
-    .insights-list { flex-direction: column; gap: 8px; }
-    .insight-card { padding: 10px 14px; align-items: center; }
-}
+/* ---------- Shared: nothing gets squashed ---------- */
+.dashboard-column .panel { flex-shrink: 0; }
+.dashboard-column .panel-auto { flex: none; }
 
-/* Very short windows: let the page scroll rather than clip content */
-@media (max-height: 780px) and (min-width: 769px) {
-    html, body { height: auto; overflow: auto; }
-    .app { height: auto; min-height: 100dvh; }
-    .main { height: auto; }
-    .dashboard-layout { flex: none; }
-    .panel-hero { flex: none; }
-    .readings { grid-template-rows: none; }
-    .reading { min-height: 130px; }
-}
-
-/* Phone: one tab per screen, each tab fits without scrolling */
-@media (max-width: 768px) {
-    :root { --pad: 14px; --gap: 10px; }
-    .main { padding: 10px 12px calc(88px + env(safe-area-inset-bottom)); gap: 10px; }
-
-    .topbar { flex-direction: column; align-items: stretch; gap: 10px; padding: 10px 12px; border-radius: 20px; }
-    .brand-mark { width: 38px; height: 38px; font-size: 22px; border-radius: 12px; }
-    .page-title h2 { font-size: 18px; }
-    .page-title p { display: none; }
-    .header-right { gap: 6px; flex-wrap: nowrap; }
-    .header-badge { padding: 7px 12px; font-size: 11px; }
-    .control-btn { padding: 7px 14px; font-size: 11px; }
-
-    .panel { border-radius: 20px; }
-    .dashboard-layout { display: flex; flex-direction: column; }
-    .dashboard-column { display: contents; }
-
-    #tab-sensors, #tab-auto, #tab-health, #tab-export { display: none !important; }
-    body.view-sensors #tab-sensors { display: flex !important; }
-    body.view-auto #tab-auto { display: flex !important; }
-    body.view-export #tab-export { display: block !important; }
-
-    /* Readings */
-    .hero-head { display: none; }
-    .reading { padding: 12px 14px; gap: 6px; }
-    .reading-chip { width: 28px; height: 28px; font-size: 16px; border-radius: 10px; }
-    .reading-label { font-size: 12px; }
-    .reading-state { display: none; }
-    .reading-val { font-size: clamp(30px, 10vw, 44px); }
-    .reading-val small { font-size: 14px; }
-
-    /* Insights: titles only unless the screen is tall */
-    .panel-insights .section-header { display: none; }
-    .insights-list { gap: 8px; }
-    .insight-card { padding: 10px 12px; align-items: center; }
-    .insight-icon { width: 32px; height: 32px; font-size: 18px; }
-    .insight-info h4 { font-size: 13px; }
-    .insight-info p { display: none; }
-
-    .panel-strip { display: none; }
-
-    .panel-vigor .section-header { display: none; }
-
-    /* Floating glass nav */
-    .bottom-nav {
-        display: flex; position: fixed; left: 14px; right: 14px; bottom: calc(14px + env(safe-area-inset-bottom));
-        gap: 4px; padding: 8px; z-index: 1000; border-radius: 26px;
-        background: linear-gradient(145deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.04)), rgba(8, 20, 14, 0.62);
-        backdrop-filter: blur(28px) saturate(160%); -webkit-backdrop-filter: blur(28px) saturate(160%);
-        border: 1px solid var(--border); box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.16);
-    }
-    .nav-item { display: flex; flex: 1; flex-direction: column; align-items: center; gap: 3px; padding: 8px 4px; border-radius: 20px; color: var(--text-muted); text-decoration: none; font-size: 11px; font-weight: 600; transition: color 0.25s, background 0.25s; }
-    .nav-item i { font-size: 22px; }
-    .bottom-nav .nav-item.active { color: var(--mint) !important; background: var(--primary-soft); box-shadow: inset 0 0 0 1px rgba(110, 231, 183, 0.25); }
-}
-
-/* Taller phones have room for the extras */
-@media (max-width: 768px) and (min-height: 780px) {
-    .panel-strip { display: flex; padding: 10px 12px; gap: 10px; }
-    .strip-title { display: none; }
-    .history-list { flex-direction: column; gap: 6px; }
-    .insight-info p { display: block; }
-}
-
-/* Short phones: squeeze harder */
-@media (max-width: 768px) and (max-height: 640px) {
-    .panel-climate { display: none; }
-    .reading { padding: 8px 12px; gap: 4px; }
-    .reading-chip { display: none; }
-    .insight-icon { display: none; }
-    .insight-card { padding: 8px 12px; }
-}
-@media (max-width: 380px) {
-    /* Keep smooth scrolling enabled */
-    body, html {
-        height: 100%;
-        overflow-x: hidden;
-        overflow-y: auto;
-    }
-
-    /* Provide enough bottom clearance so content scrolls completely above the nav bar */
-    .main {
-        overflow-y: auto !important;
-        -webkit-overflow-scrolling: touch;
-        padding-bottom: 90px !important; 
-    }
-
-    /* Completely removes any border and ensures no curvature or line */
-    .bottom-nav {
-        position: fixed !important;
-        bottom: 0 !important;
-        left: 0 !important;
-        width: 100% !important;
-        z-index: 1000 !important;
-        border: none !important;
-        border-top: none !important;
-        border-radius: 0 !important;
-    }
-
-    /* Adds a clean breathing margin below the final panel */
-    .dashboard-column > div:last-child {
-        margin-bottom: 16px !important;
-    }
-
-    .panel-auto {
-        padding: 12px !important;
-    }
-
-    .automation-list {
-        gap: 8px !important;
-    }
-
-    .auto-card-modern {
-        padding: 10px 12px !important;
-        gap: 10px;
-        justify-content: space-between;
-    }
-
-    .auto-lead {
-        gap: 8px !important;
-        overflow: hidden;
-    }
-
-    .auto-icon {
-        width: 32px !important;
-        height: 32px !important;
-        min-width: 32px !important;
-        font-size: 15px !important;
-        border-radius: 8px;
-    }
-
-    .toggle-info {
-        min-width: 0;
-    }
-
-    .toggle-info h4 {
-        font-size: 12px !important;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-    }
-
-    .toggle-info p {
-        font-size: 10px !important;
-        line-height: 1.2;
-        display: -webkit-box;
-        -webkit-line-clamp: 2;
-        -webkit-box-orient: vertical;
-        overflow: hidden;
-    }
-
-    .auto-status-pill {
-        padding: 3px 8px !important;
-        font-size: 10px !important;
-        font-weight: 600;
-        white-space: nowrap;
-    }
-}
-
-@media (max-width: 760px) {
-    /* Keep smooth scrolling enabled */
-    body, html {
-        height: 100%;
-        overflow-x: hidden;
-        overflow-y: auto;
-    }
-
-    /* Provide enough bottom clearance so content scrolls completely above the nav bar */
-    .main {
-        overflow-y: auto !important;
-        -webkit-overflow-scrolling: touch;
-        padding-bottom: 90px !important; 
-    }
-
-    /* Completely removes any border and ensures no curvature or line up to 760px */
-    .bottom-nav {
-        position: fixed !important;
-        bottom: 0 !important;
-        left: 0 !important;
-        width: 100% !important;
-        z-index: 1000 !important;
-        border: none !important;
-        border-top: none !important;
-        border-radius: 0 !important;
-    }
-
-    /* Adds a clean breathing margin below the final panel */
-    .dashboard-column > div:last-child {
-        margin-bottom: 16px !important;
-    }
-
-    .panel-auto {
-        padding: 12px !important;
-    }
-
-    .automation-list {
-        gap: 8px !important;
-    }
-
-    .auto-card-modern {
-        padding: 10px 12px !important;
-        gap: 10px;
-        justify-content: space-between;
-    }
-
-    .auto-lead {
-        gap: 8px !important;
-        overflow: hidden;
-    }
-
-    .auto-icon {
-        width: 32px !important;
-        height: 32px !important;
-        min-width: 32px !important;
-        font-size: 15px !important;
-        border-radius: 8px;
-    }
-
-    .toggle-info {
-        min-width: 0;
-    }
-
-    .toggle-info h4 {
-        font-size: 12px !important;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-    }
-
-    .toggle-info p {
-        font-size: 10px !important;
-        line-height: 1.2;
-        display: -webkit-box;
-        -webkit-line-clamp: 2;
-        -webkit-box-orient: vertical;
-        overflow: hidden;
-    }
-
-    .auto-status-pill {
-        padding: 3px 8px !important;
-        font-size: 10px !important;
-        font-weight: 600;
-        white-space: nowrap;
-    }
-}
-
-/* =====================================================================
-   v9: fit any screen without overlap
-   ===================================================================== */
-html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
-
-/* Header: wraps instead of running off the screen */
 .topbar { flex-wrap: wrap; }
 .brand { flex: 1 1 auto; min-width: 0; }
 .page-title { min-width: 0; }
@@ -277,34 +13,126 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 .header-right { flex-wrap: wrap; justify-content: flex-end; margin-left: auto; min-width: 0; }
 .header-badge, .control-btn { white-space: nowrap; }
 
-/* Automation rows: text can never be squashed onto its neighbours */
-.auto-card-modern { min-height: 64px; }
+.panel-insights > div:first-child { flex-wrap: wrap; gap: 8px; }
+
+/* Automation rows size to their content instead of sharing leftover height */
+.automation-list { flex: none; justify-content: flex-start; gap: 10px; }
+.auto-card-modern { flex: none; max-height: none; min-height: 68px; padding: 12px 16px; }
 .auto-lead { flex: 1 1 auto; min-width: 0; }
 .toggle-info { min-width: 0; }
 .toggle-info h4, .toggle-info p { overflow-wrap: anywhere; }
 .auto-status-pill { flex: none; white-space: nowrap; }
 
-/* "Recent" strip: the four numbers wrap instead of overlapping */
 .history-stats { flex-wrap: wrap; }
+.reading-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* Modals: always fit the screen, scroll inside if the screen is short */
 .modal { overflow-y: auto; }
 .modal-card { margin: auto; max-height: calc(100dvh - 40px); overflow-y: auto; overflow-x: hidden; }
 
-/* Tablets / small laptops: save header width */
-@media (max-width: 1100px) {
-    .page-title p { display: none; }
+/* ---------- Desktop: one screen, each column scrolls inside itself if needed ---------- */
+@media (min-width: 769px) {
+    #tab-sensors, #tab-auto { overflow-y: auto; overflow-x: hidden; }
+    .dashboard-column .panel-hero { flex: 1 0 auto; min-height: 300px; }
+    .readings { grid-template-rows: repeat(2, minmax(120px, 1fr)); }
+    .reading { min-height: 120px; }
 }
 
-/* Phones */
+@media (min-width: 769px) and (max-width: 1200px) {
+    .dashboard-layout { grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); }
+    .insights-list { flex-direction: column; gap: 8px; }
+    .insight-card { padding: 10px 14px; align-items: center; }
+}
+@media (max-width: 1100px) { .page-title p { display: none; } }
+
+/* ---------- Short windows or small tablets: whole page scrolls, columns stack when narrow ---------- */
+@media (min-width: 769px) and (max-height: 780px), (min-width: 769px) and (max-width: 900px) {
+    html, body { height: auto; overflow-y: auto; overflow-x: hidden; }
+    .app { height: auto; min-height: 100dvh; }
+    .main { height: auto; }
+    .dashboard-layout { flex: none; }
+    .dashboard-column { flex: none; }
+    #tab-sensors, #tab-auto { flex: none; overflow: visible; }
+    .dashboard-column .panel-hero { flex: none; }
+    .readings { grid-template-rows: none; }
+}
+@media (min-width: 769px) and (max-width: 900px) {
+    .dashboard-layout { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* ---------- Phones: one tab per screen, page scrolls normally ---------- */
 @media (max-width: 768px) {
-    .header-right { flex-wrap: wrap; justify-content: space-between; margin-left: 0; }
+    :root { --pad: 14px; --gap: 10px; }
+    html, body { height: auto; min-height: 100%; overflow-x: hidden; overflow-y: auto; }
+    .app { height: auto; min-height: 100dvh; }
+    .main { height: auto; padding: 10px 12px calc(96px + env(safe-area-inset-bottom)); gap: 10px; }
+
+    .topbar { flex-direction: column; align-items: stretch; gap: 10px; padding: 10px 12px; border-radius: 20px; }
+    .brand-mark { width: 38px; height: 38px; font-size: 22px; border-radius: 12px; }
+    .page-title h2 { font-size: 18px; }
+    .page-title p { display: none; }
+    .header-right { justify-content: space-between; margin-left: 0; gap: 8px; }
     .esp-status { flex: 1 1 auto; min-width: 0; }
     .date-status { order: 5; flex: 1 1 100%; justify-content: center; }
-    .header-badge { padding: 6px 12px; }
+    .header-badge { padding: 6px 12px; font-size: 11px; }
+    .control-btn { padding: 8px 14px; font-size: 11px; }
+
+    .panel { border-radius: 20px; }
+    .dashboard-layout { display: flex; flex-direction: column; flex: none; }
+    .dashboard-column { display: contents; }
+
+    #tab-sensors, #tab-auto, #tab-health, #tab-export { display: none !important; }
+    body.view-sensors #tab-sensors,
+    body.view-auto #tab-auto { display: flex !important; flex: none; overflow: visible; }
+    body.view-export #tab-export { display: block !important; }
+
+    /* Readings */
+    .hero-head { display: none; }
+    .dashboard-column .panel-hero { flex: none; }
+    .readings { grid-template-rows: none; }
+    .reading { min-height: 104px; padding: 12px 14px; gap: 6px; }
+    .reading-chip { width: 28px; height: 28px; font-size: 16px; border-radius: 10px; }
+    .reading-label { font-size: 12px; }
+    .reading-state { display: none; }
+    .reading-val { font-size: clamp(28px, 9vw, 40px); }
+    .reading-val small { font-size: 14px; }
+
+    /* Activity log */
+    #automationLogList { max-height: min(190px, 28vh) !important; }
+
+    /* Recent strip: always visible (it holds the history button) */
+    .panel-strip { display: flex; padding: 10px 12px; gap: 10px; }
+    .strip-title { display: none; }
+    .history-list { flex-direction: column; gap: 6px; }
+
+    .panel-vigor .section-header { display: none; }
+
+    /* Floating glass nav (same on every phone width) */
+    .bottom-nav {
+        display: flex; position: fixed; left: 12px; right: 12px; bottom: calc(12px + env(safe-area-inset-bottom));
+        gap: 4px; padding: 8px; z-index: 1000; border-radius: 26px;
+        background: linear-gradient(145deg, rgba(255,255,255,0.12), rgba(255,255,255,0.04)), rgba(8, 20, 14, 0.62);
+        backdrop-filter: blur(28px) saturate(160%); -webkit-backdrop-filter: blur(28px) saturate(160%);
+        border: 1px solid var(--border); box-shadow: 0 16px 40px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.16);
+    }
+    .nav-item { display: flex; flex: 1; flex-direction: column; align-items: center; gap: 3px; padding: 8px 4px; border-radius: 20px; color: var(--text-muted); text-decoration: none; font-size: 11px; font-weight: 600; transition: color .25s, background .25s; }
+    .nav-item i { font-size: 22px; }
+    .bottom-nav .nav-item.active { color: var(--mint) !important; background: var(--primary-soft); box-shadow: inset 0 0 0 1px rgba(110,231,183,0.25); }
+
+    .toast-host { bottom: calc(96px + env(safe-area-inset-bottom)); }
 }
 
-/* Short phones (and phones held sideways): drop the date to save room */
-@media (max-width: 768px) and (max-height: 700px) {
-    .date-status { display: none; }
+/* Small phones: tighter rows */
+@media (max-width: 480px) {
+    .panel-auto { padding: 12px; }
+    .auto-card-modern { padding: 10px 12px; gap: 10px; min-height: 60px; }
+    .auto-lead { gap: 10px; }
+    .auto-icon { width: 32px; height: 32px; font-size: 16px; border-radius: 10px; }
+    .toggle-info h4 { font-size: 13px; }
+    .toggle-info p { font-size: 11px; line-height: 1.3; }
+    .auto-status-pill { padding: 4px 9px; font-size: 11px; }
+    .vigor-card { gap: 14px; }
 }
+
+/* Phones held sideways / very short: drop the date and the climate strip */
+@media (max-width: 768px) and (max-height: 700px) { .date-status { display: none; } }
+@media (max-width: 768px) and (max-height: 560px) { .panel-climate { display: none; } }
