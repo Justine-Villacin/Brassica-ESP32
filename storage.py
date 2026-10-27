@@ -223,56 +223,58 @@ def record_update(fields, history_row=None):
 # ---------------------------------------------------------------------------
 
 def _auto_seed_history_sync(client):
-    """Guaranteed synchronous seeding: populates history if empty or invalid."""
+    """Guaranteed synchronous seeding from local sensor_data.csv into Redis."""
     try:
-        # Check existing items
-        raw_count = client.llen(KEY_HISTORY)
-        if raw_count > 0:
-            # Check if the list actually contains valid JSON rows or is just noise
-            sample = client.lrange(KEY_HISTORY, 0, 0)
-            if sample and sample[0]:
-                try:
-                    json.loads(sample[0])
-                    return  # Already populated with valid data
-                except (TypeError, ValueError):
-                    pass  # Corrupted data found, clear and re-seed
-            # Clear corrupted/empty key
-            client.delete(KEY_HISTORY)
+        if client.llen(KEY_HISTORY) > 0:
+            return  # Already populated
 
-        start_date = datetime(2026, 10, 19, 0, 0, 0)
-        end_date = datetime(2026, 10, 26, 23, 55, 0)
-        
+        csv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sensor_data.csv")
         history_list = []
-        current = start_date
-        while current <= end_date:
-            timestamp = current.strftime("%Y-%m-%d %H:%M:%S")
-            hour = current.hour
-            temp = round(27.5 + 3.5 * ((hour - 7) / 11 if 7 <= hour <= 18 else (18 - hour) / 11), 1)
-            temp = max(25.0, min(32.0, temp + random.uniform(-0.8, 0.8)))
-            hum = round(72.0 - (temp - 26.0) * 1.2 + random.uniform(-3.0, 3.0), 1)
-            hum = max(55.0, min(88.0, hum))
-            soil1 = round(68.0 + random.uniform(-5.0, 5.0), 1)
-            soil2 = round(73.0 + random.uniform(-4.0, 4.0), 1)
-            pump = bool(soil1 < 60.0 or soil2 < 60.0)
-            fan = bool(temp > 29.5)
-            
-            history_list.append({
-                "timestamp": timestamp,
-                "temp": temp,
-                "hum": hum,
-                "soil1": soil1,
-                "soil2": soil2,
-                "pump": pump,
-                "fan": fan
-            })
-            current += timedelta(minutes=5)
+        
+        if os.path.exists(csv_path):
+            with open(csv_path, "r", encoding="utf-8", newline="") as f:
+                reader = csv.reader(f)
+                header = next(reader, None) # Skip header
+                for row in reader:
+                    if not row or len(row) < 7:
+                        continue
+                    try:
+                        history_list.append({
+                            "timestamp": row[0],
+                            "temp": float(row[1]) if row[1] != "ERR" else "ERR",
+                            "hum": float(row[2]) if row[2] != "ERR" else "ERR",
+                            "soil1": float(row[3]) if row[3] != "ERR" else "ERR",
+                            "soil2": float(row[4]) if row[4] != "ERR" else "ERR",
+                            "pump": str(row[5]).strip().lower() in ("true", "1", "active", "on"),
+                            "fan": str(row[6]).strip().lower() in ("true", "1", "active", "on"),
+                        })
+                    except (ValueError, TypeError):
+                        continue
+
+        # Fallback if CSV is missing or empty
+        if not history_list:
+            start_date = datetime(2026, 10, 19, 0, 0, 0)
+            end_date = datetime(2026, 10, 26, 23, 55, 0)
+            current = start_date
+            while current <= end_date:
+                timestamp = current.strftime("%Y-%m-%d %H:%M:%S")
+                history_list.append({
+                    "timestamp": timestamp,
+                    "temp": 28.5,
+                    "hum": 70.0,
+                    "soil1": 68.0,
+                    "soil2": 73.0,
+                    "pump": False,
+                    "fan": False
+                })
+                current += timedelta(minutes=5)
 
         if history_list:
             json_rows = [json.dumps(row) for row in history_list]
             client.rpush(KEY_HISTORY, *json_rows)
-            print(f"[storage] Successfully auto-seeded {len(history_list)} records into Redis!")
+            print(f"[storage] Successfully seeded {len(history_list)} records from CSV into Redis!")
     except Exception as exc:
-        print(f"[storage] Auto-seed sync error: {exc}")
+        print(f"[storage] CSV Seeding error: {exc}")
         
         
 def get_history():
