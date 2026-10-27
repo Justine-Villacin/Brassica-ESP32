@@ -7,6 +7,8 @@ import os
 import threading
 import time
 from collections import deque
+import random
+from datetime import datetime, timedelta
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -295,3 +297,58 @@ def kv_get_many(names):
 
 def kv_get(name):
     return kv_get_many([name])[name]
+
+
+# ---------------------------------------------------------------------------
+# Auto-seed mock history into Redis if empty (No external CSV needed!)
+# ---------------------------------------------------------------------------
+
+def _auto_seed_history():
+    if not REDIS_URL:
+        return
+    try:
+        client = _get_client()
+        if client.llen(KEY_HISTORY) > 0:
+            return  # Already populated
+
+        # Generate mock history from Oct 19 to Oct 26 at 5-minute intervals
+        start_date = datetime(2026, 10, 19, 0, 0, 0)
+        end_date = datetime(2026, 10, 26, 23, 55, 0)
+        
+        history_list = []
+        current = start_date
+        while current <= end_date:
+            timestamp = current.strftime("%Y-%m-%d %H:%M:%S")
+            hour = current.hour
+            temp = round(27.5 + 3.5 * ((hour - 7) / 11 if 7 <= hour <= 18 else (18 - hour) / 11), 1)
+            temp = max(25.0, min(32.0, temp + random.uniform(-0.8, 0.8)))
+            hum = round(72.0 - (temp - 26.0) * 1.2 + random.uniform(-3.0, 3.0), 1)
+            hum = max(55.0, min(88.0, hum))
+            soil1 = round(68.0 + random.uniform(-5.0, 5.0), 1)
+            soil2 = round(73.0 + random.uniform(-4.0, 4.0), 1)
+            pump = bool(soil1 < 60.0 or soil2 < 60.0)
+            fan = bool(temp > 29.5)
+            
+            history_list.append({
+                "timestamp": timestamp,
+                "temp": temp,
+                "hum": hum,
+                "soil1": soil1,
+                "soil2": soil2,
+                "pump": pump,
+                "fan": fan
+            })
+            current += timedelta(minutes=5)
+
+        if history_list:
+            json_rows = [json.dumps(row) for row in history_list]
+            client.rpush(KEY_HISTORY, *json_rows)
+            print(f"[storage] Auto-seeded {len(history_list)} historical mock records into cloud Redis.")
+    except Exception as exc:
+        print(f"[storage] Auto-seed error: {exc}")
+
+if ON_VERCEL and REDIS_URL:
+    try:
+        _auto_seed_history()
+    except Exception:
+        pass
