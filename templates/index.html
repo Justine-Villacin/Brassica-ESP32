@@ -179,7 +179,7 @@
                             </div>
                             <div style="display: flex; flex-direction: column; gap: 2px; min-width: 0;">
                                 <h4 style="margin: 0; font-size: 14px; font-weight: 600; color: var(--text-main); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">Water Pump Override</h4>
-                                <p style="margin: 0; font-size: 11px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">Force manual watering</p>
+                                <p id="manualPumpDesc" style="margin: 0; font-size: 11px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">Force manual watering</p>
                             </div>
                         </div>
                         
@@ -438,7 +438,7 @@
 </script>
 
 <!-- Linked to module EntryPoint -->
-<script type="module" src="/js/main.js"></script>
+<script type="module" src="/js/main.js?v=23"></script>
 
 {% if dev_mode %}
 <!-- DEV MODE: live-reload SSE stream client. -->

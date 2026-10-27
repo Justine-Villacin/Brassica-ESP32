@@ -1,11 +1,15 @@
 export function updateAutomationUI(data) {
+    // The manual override is ON only if the server holds an ON override
+    // (the same for every device that opens the dashboard).
+    const manualOn = !!(data.manualPumpActive && data.manualPumpOn);
+
     // --- Manual Pump Button Sync ---
     const manualPumpBtn = document.getElementById("manualPumpBtn");
     if (manualPumpBtn) {
         // Keep the switch in step with the server (e.g. after a page reload),
         // but never while a request is in flight.
         if (!manualPumpBtn.disabled) {
-            manualPumpBtn.checked = !!(data.manualPumpActive && data.manualPumpOn);
+            manualPumpBtn.checked = manualOn;
         }
         if (data.pump) {
             manualPumpBtn.setAttribute("data-state", "on");
@@ -20,6 +24,18 @@ export function updateAutomationUI(data) {
         }
     }
 
+    // --- Manual card status text (visible on every device) ---
+    const manualDesc = document.getElementById("manualPumpDesc");
+    if (manualDesc) {
+        let text = "Force manual watering";
+        let color = "var(--text-muted)";
+        if (manualOn && data.pump)  { text = "Pump is running (manual override)"; color = "var(--primary)"; }
+        else if (manualOn)          { text = "Override ON, waiting for the ESP32..."; color = "var(--warning)"; }
+        else if (data.pump)         { text = "Pump is running (automatic)"; color = "var(--primary)"; }
+        manualDesc.textContent = text;
+        manualDesc.style.color = color;
+    }
+
     // --- Auto-Watering Card ---
     const pumpCard = document.getElementById("autoWateringCard");
     const pumpPill = document.getElementById("pumpPill");
@@ -30,7 +46,12 @@ export function updateAutomationUI(data) {
         document.getElementById("pumpTitle").textContent = "Auto-Watering";
         document.getElementById("pumpDesc").textContent = "Soil sensor disconnected — disabled.";
         if (pumpPill) pumpPill.textContent = "Offline";
-    } else if (data.pump && !data.manualPumpActive) {
+    } else if (manualOn) {
+        if (pumpCard) pumpCard.classList.add("active-pump");
+        document.getElementById("pumpTitle").textContent = "Auto-Watering";
+        document.getElementById("pumpDesc").textContent = "Manual override is controlling the pump.";
+        if (pumpPill) pumpPill.textContent = "Manual";
+    } else if (data.pump) {
         if (pumpCard) pumpCard.classList.add("active-pump");
         document.getElementById("pumpTitle").textContent = "Auto-Watering";
         document.getElementById("pumpDesc").textContent = "Soil moisture is low. Pumping water.";

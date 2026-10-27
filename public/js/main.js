@@ -1,5 +1,5 @@
 import { updateDateTime } from './utils.js';
-import { updateSensorUI, updateAutomationUI } from './ui.js';
+import { updateSensorUI, updateAutomationUI } from './ui.js?v=23';
 import './pwa.js';        // PWA install logic (runs on import)
 import './navigation.js'; // mobile tab navigation (runs on import)
 import './wifi.js';       // Wi-Fi setup modal

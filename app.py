@@ -417,7 +417,10 @@ def update_from_esp32():
     # disconnected (the firmware already forces it OFF; enforce it here too).
     fan = (data.get("fan") == "ON") and dht_ok
     fan2 = (data.get("fan2") == "ON") and dht_ok
-    pump = (data.get("water_pump") == "ON") and soil_ok
+    # The manual override runs the pump even with no working soil sensor
+    # (by design, see config.h), so it must still be reported as ON.
+    pump_override = _as_bool(data.get("pump_override"), False)
+    pump = (data.get("water_pump") == "ON") and (soil_ok or pump_override)
 
 
     fields = {
