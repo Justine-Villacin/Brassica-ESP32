@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Brassica Monitoring</title>
+<link rel="stylesheet" href="/css/main.css?v=22">
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#050a07">
+<link rel="apple-touch-icon" href="/icons/icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<script src="https://unpkg.com/@phosphor-icons/web"></script>
+</head>
+<body>
+
+<div class="app">
+<main class="main">
+
+<div id="backendBanner" class="backend-banner" role="alert" style="display:none;">
+    <i class="ph-fill ph-warning-circle"></i>
+    <span id="backendBannerText">Backend unreachable — retrying...</span>
+</div>
+
+<!-- HEADER -->
+<div class="topbar">
+    <div class="brand">
+        <div class="brand-mark"><i class="ph-fill ph-plant"></i></div>
+        <div class="page-title">
+            <h2>Brassica Monitoring</h2>
+            <p>Live environment monitoring</p>
+        </div>
+    </div>
+
+    <div class="header-right">
+        <div class="header-badge esp-status" id="espBadge">
+            <div class="dot" id="espDot"></div>
+            <span id="espText">CONNECTING...</span>
+        </div>
+        <div class="header-badge date-status" id="currentDate">Loading...</div>
+        <button onclick="openWifiModal()" style="background: transparent; border: none; cursor: pointer; padding: 4px; display: flex; align-items: center; color: var(--text-main);" title="Network Setup">
+            <i class="ph-bold ph-wifi-high" style="font-size: 22px;"></i>
+        </button>
+        <button class="control-btn" id="installBtn" onclick="handleInstallClick()">
+            <i class="ph-bold ph-download-simple"></i> Install
+        </button>
+    </div>
+</div>
+
+<div class="dashboard-layout">
+
+    <!-- LEFT COLUMN: SENSORS -->
+    <div class="dashboard-column">
+
+        <div id="tab-sensors">
+
+            <!-- Hero: live readings -->
+            <div class="panel panel-hero">
+                <div class="hero-head">
+                    <h3>Environment overview</h3>
+                    <span class="hero-key">Ideal range</span>
+                </div>
+
+                <div class="readings">
+                    <div class="reading is-temp">
+                        <div class="reading-top"><span class="reading-chip"><i class="ph-fill ph-thermometer"></i></span><span class="reading-label">Temperature</span><span class="reading-state">No data</span></div>
+                        <div class="reading-val"><span id="temperature">--</span><small>&deg;C</small></div>
+                        <div class="meter" data-source="temperature" data-min="0" data-max="45" data-ideal-min="15" data-ideal-max="28"><i class="meter-ideal"></i><b class="meter-pin"></b></div>
+                    </div>
+                    <div class="reading is-hum">
+                        <div class="reading-top"><span class="reading-chip"><i class="ph-fill ph-drop"></i></span><span class="reading-label">Humidity</span><span class="reading-state">No data</span></div>
+                        <div class="reading-val"><span id="humidity">--</span><small>%</small></div>
+                        <div class="meter" data-source="humidity" data-min="0" data-max="100" data-ideal-min="55" data-ideal-max="80"><i class="meter-ideal"></i><b class="meter-pin"></b></div>
+                    </div>
+                    <div class="reading is-soil">
+                        <div class="reading-top"><span class="reading-chip"><i class="ph-fill ph-potted-plant"></i></span><span class="reading-label">Soil moisture 1</span><span class="reading-state">No data</span></div>
+                        <div class="reading-val"><span id="soil">--</span><small>%</small></div>
+                        <div class="meter" data-source="soil" data-min="0" data-max="100" data-ideal-min="40" data-ideal-max="70"><i class="meter-ideal"></i><b class="meter-pin"></b></div>
+                    </div>
+                    <!-- Soil Sensor 2 -->
+                    <div class="reading is-soil">
+                        <div class="reading-top"><span class="reading-chip"><i class="ph-fill ph-potted-plant"></i></span><span class="reading-label">Soil Moisture 2</span><span class="reading-state">No data</span></div>
+                        <div class="reading-val"><span id="soil2">--</span><small>%</small></div>
+                        <div class="meter" data-source="soil2" data-min="0" data-max="100" data-ideal-min="40" data-ideal-max="70"><i class="meter-ideal"></i><b class="meter-pin"></b></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Smart insights -->
+            <!-- Automation Activity Log (Replaces Smart insights) -->
+            <!-- Automation Activity Log with Date Navigation -->
+            <div class="panel panel-insights" style="display: flex; flex-direction: column; gap: 12px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0;">
+                    <h3 style="margin: 0; font-size: 15px;">Automation Activity Log</h3>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <button onclick="changeActivityDate(-1)" class="control-btn" style="padding: 4px 8px; font-size: 11px; background: rgba(255,255,255,0.05); border: none;"><i class="ph-bold ph-caret-left"></i></button>
+                        <span id="activityDateLabel" style="font-size: 11px; font-weight: 600; color: var(--primary);">Loading...</span>
+                        <button onclick="changeActivityDate(1)" class="control-btn" style="padding: 4px 8px; font-size: 11px; background: rgba(255,255,255,0.05); border: none;"><i class="ph-bold ph-caret-right"></i></button>
+                    </div>
+                </div>
+                <div id="automationLogList" style="display: flex; flex-direction: column; gap: 10px; max-height: 190px; overflow-y: auto; padding-right: 4px;">
+                    <span style="font-size: 12px; color: var(--text-muted);">Loading log...</span>
+                </div>
+            </div>
+
+            <!-- Recent (slim strip) WITH ADDED BUTTON -->
+            <div class="panel panel-strip" style="align-items: center;">
+                <h3 class="strip-title">Recent</h3>
+                <div class="history-list">
+                    <div class="history-item">
+                        <span class="history-date">Yesterday</span>
+                        <div class="history-stats">
+                            <span class="t"><i class="ph-fill ph-thermometer"></i> 31.2&deg;C</span>
+                            <span class="h"><i class="ph-fill ph-drop"></i> 72%</span>
+                            <span class="s"><i class="ph-fill ph-potted-plant"></i> 45%</span>
+                        </div>
+                    </div>
+                </div>
+                <button class="control-btn" style="flex: none; padding: 10px 14px;" onclick="openHistoryModal()">
+                    <i class="ph-bold ph-arrow-right" style="margin-left: 4px;"></i>
+                </button>
+            </div>
+
+        </div>
+    </div>
+
+    <!-- RIGHT COLUMN: RELAYS & EXPORT -->
+<!-- RIGHT COLUMN: RELAYS & EXPORT -->
+    <div class="dashboard-column">
+
+        <div id="tab-auto">
+            
+            <!-- Top Row: Climate & Water Tank Side-by-Side -->
+            <div style="display: grid; gap: var(--gap); flex: none;">
+                <!-- Climate System -->
+                <div class="panel panel-climate" style="padding: 14px 16px; margin: 0; display: flex; align-items: center;">
+                    <div class="climate-box" style="gap: 12px; margin: 0;">
+                        <div class="climate-icon" style="width: 38px; height: 38px; font-size: 20px;"><i class="ph-fill ph-plant"></i></div>
+                        <div class="climate-text">
+                            <strong style="font-size: 14px; color: var(--text-main); display: block;">Climate Active</strong>
+                            <span style="font-size: 11px; color: var(--text-muted);">Regulating metrics</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="panel panel-vigor">
+                <div class="section-header">
+                    <h3>Plant health</h3>
+                </div>
+                <div class="vigor-card">
+                    <!-- Dynamic Progress Ring container -->
+                    <div class="vigor-ring" id="vigorRingContainer" style="--pct: 98;">
+                        <span class="ring-arc" id="vigorRingArc"></span>
+                        <strong id="healthScore">98%</strong>
+                    </div>
+                    <div class="vigor-lead">
+                        <h4>Brassica Vigor</h4>
+                        <p id="healthDesc">Leaf biometric index is optimal</p>
+                        <span id="healthStatusBadge" style="display: inline-block; margin-top: 8px; padding: 3px 10px; border-radius: var(--r-pill); font-size: 12px; font-weight: 600; color: var(--mint); background: var(--primary-soft);">Optimal</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Manual Control -->
+            <div class="panel panel-auto" style="flex: none; margin-bottom: 24px;">
+                <div class="section-header">
+                    <h3>Manual Control</h3>
+                </div>
+                <div class="automation-list">
+                    <div id="manualWateringCard" style="display: flex; align-items: center; justify-content: space-between; background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.06); border-radius: 14px; padding: 14px 18px; gap: 12px;">
+                        <div style="display: flex; align-items: center; gap: 14px; flex: 1; min-width: 0;">
+                            <div style="display: flex; align-items: center; justify-content: center; width: 40px; height: 40px; background: rgba(255, 255, 255, 0.05); border-radius: 50%; font-size: 18px; color: var(--primary); flex-shrink: 0;">
+                                <i class="ph-fill ph-drop"></i>
+                            </div>
+                            <div style="display: flex; flex-direction: column; gap: 2px; min-width: 0;">
+                                <h4 style="margin: 0; font-size: 14px; font-weight: 600; color: var(--text-main); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">Water Pump Override</h4>
+                                <p style="margin: 0; font-size: 11px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">Force manual watering</p>
+                            </div>
+                        </div>
+                        
+                        <!-- Toggle Switch Container -->
+                        <div style="flex-shrink: 0;">
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="manualPumpBtn" onchange="togglePump()">
+                                <span class="slider round"></span>
+                            </label>
+                        </div>
+                        
+                    </div>
+                </div>
+            </div>
+
+            <!-- Automation -->
+            <div class="panel panel-auto">
+                <div class="section-header">
+                    <h3>Automation</h3>
+                </div>
+                <div class="automation-list">
+
+                    <div class="auto-card-modern" id="autoWateringCard">
+                        <div class="auto-lead">
+                            <div class="auto-icon"><i class="ph-fill ph-drop"></i></div>
+                            <div class="toggle-info">
+                                <h4 id="pumpTitle">Auto-Watering</h4>
+                                <p id="pumpDesc">Soil is hydrated</p>
+                            </div>
+                        </div>
+                        <div class="toggle-group">
+                            <span class="auto-status-pill" id="pumpPill">Standby</span>
+                        </div>
+                    </div>
+
+                    <div class="auto-card-modern" id="autoFanCard">
+                        <div class="auto-lead">
+                            <div class="auto-icon"><i class="ph-fill ph-fan"></i></div>
+                            <div class="toggle-info">
+                                <h4 id="fanTitle">Exhaust Fan</h4>
+                                <p id="fanDesc">Optimal temperature</p>
+                            </div>
+                        </div>
+                        <div class="toggle-group">
+                            <span class="auto-status-pill" id="fanPill">Standby</span>
+                        </div>
+                    </div>
+
+                    
+
+                </div>
+            </div>
+        </div>
+
+        
+
+        <!-- Data export -->
+        <div id="tab-export">
+            <button class="control-btn export-btn" onclick="downloadFile('/download/excel', 'Brassica_Data.xlsx')">
+                <i class="ph-bold ph-file-xls"></i> Download full Excel report
+            </button>
+        </div>
+
+    </div>
+</div>
+
+</main>
+
+<!-- BOTTOM NAVIGATION BAR (Mobile) -->
+<nav class="bottom-nav">
+    <a href="#tab-sensors" class="nav-item active" onclick="switchTab('sensors', this, event)">
+        <i class="ph-fill ph-thermometer"></i>
+        <span>Sensors</span>
+    </a>
+    <a href="#tab-auto" class="nav-item" onclick="switchTab('auto', this, event)">
+        <i class="ph-fill ph-cpu"></i>
+        <span>Auto</span>
+    </a>
+    <a href="#tab-export" class="nav-item" onclick="switchTab('export', this, event)">
+        <i class="ph-fill ph-hard-drives"></i>
+        <span>Export</span>
+    </a>
+</nav>
+
+</div>
+
+<!-- 7-DAY AVERAGES MODAL -->
+<div id="historyModal" class="modal" style="display:none;">
+    <div class="modal-card" style="max-width: 480px; text-align: left; padding: 24px;">
+        
+        <!-- Modal Header -->
+        <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 24px;">
+            <div>
+                <h4 style="margin: 0; display: flex; align-items: center; gap: 8px; font-size: 18px;">
+                    <i class="ph-fill ph-calendar-blank" style="color: var(--primary);"></i> 7-Day Averages
+                </h4>
+                <p style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">Daily environmental metric summary</p>
+            </div>
+            <button class="control-btn" style="width: 28px; height: 28px; padding: 0; display: flex; justify-content: center; align-items: center; border-radius: 50%; background: rgba(255,255,255,0.1); border: none;" onclick="closeHistoryModal()">                <i class="ph-bold ph-x" style="font-size: 14px;"></i>
+            </button>
+        </div>
+        
+        <!-- Table Column Headers -->
+        <div style="display: grid; grid-template-columns: 1.2fr 1fr 1fr 1fr 1fr; padding: 0 12px 10px; font-size: 9px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid rgba(255,255,255,0.1); margin-bottom: 8px;">
+            <span>Date</span>
+            <span style="text-align: center;">Temp</span>
+            <span style="text-align: center;">Hum</span>
+            <span style="text-align: center;">Soil 1</span>
+            <span style="text-align: right;">Soil 2</span>
+        </div>
+
+        <!-- Scrollable Vertical History List -->
+        <div id="modalHistoryList" style="display: flex; flex-direction: column; gap: 8px; max-height: 55vh; overflow-y: auto; padding-right: 4px;">
+            
+            <!-- Row 1 (Placeholder / Fallback) -->
+            <div style="display: grid; grid-template-columns: 1.2fr 1fr 1fr 1fr 1fr; align-items: center; padding: 10px 12px; background: linear-gradient(145deg, rgba(255,255,255,0.06), rgba(255,255,255,0.01)); border: 1px solid rgba(255,255,255,0.04); border-radius: 10px;">
+                <div style="display: flex; flex-direction: column; gap: 2px;">
+                    <span style="font-size: 11px; font-weight: 600; color: var(--text-main);">Oct 10</span>
+                </div>
+                <div style="text-align: center; color: var(--c-temp); font-size: 11px; font-weight: 700;">30.5&deg;</div>
+                <div style="text-align: center; color: var(--c-hum); font-size: 11px; font-weight: 700;">75%</div>
+                <div style="text-align: center; color: var(--c-soil); font-size: 11px; font-weight: 700;">50%</div>
+                <div style="text-align: right; color: var(--c-soil); font-size: 11px; font-weight: 700;">48%</div>
+            </div>
+            
+        </div>
+
+    </div>
+</div>
+
+<!-- WI-FI SETUP MODAL (logic in /js/wifi.js) -->
+<div id="wifiModal" class="modal" style="display:none;">
+    <div class="modal-card" style="max-width: 380px; text-align: left; padding: 24px;">
+
+        <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px;">
+            <div>
+                <h4 style="margin: 0; display: flex; align-items: center; gap: 8px; font-size: 18px;">
+                    <i class="ph-fill ph-wifi-high" style="color: var(--primary);"></i> ESP32 Wi-Fi
+                </h4>
+                <p style="font-size: 12px; color: var(--text-muted); margin: 4px 0 0;">Pick the network the ESP32 should use. No re-flashing needed.</p>
+            </div>
+            <button class="control-btn" style="width: 28px; height: 28px; padding: 0; display: flex; justify-content: center; align-items: center; border-radius: 50%; background: rgba(255,255,255,0.1); border: none;" onclick="closeWifiModal()" aria-label="Close">
+                <i class="ph-bold ph-x" style="font-size: 14px;"></i>
+            </button>
+        </div>
+
+        <div id="wifiDeviceLine" class="wifi-line">Checking the ESP32...</div>
+        <div id="wifiOpenWarning" class="wifi-warn">
+            Anyone who knows this website's address could change the ESP32's Wi-Fi. Set a
+            <strong>BRASSICA_ADMIN_PIN</strong> in your Vercel environment variables to protect it.
+        </div>
+
+        <!-- Step 1: choose a network -->
+        <div id="wifiListSection">
+            <div id="wifiListContainer" class="wifi-list"></div>
+            <div class="wifi-actions">
+                <button type="button" id="wifiRescanBtn" class="control-btn" onclick="rescanWifi()"><i class="ph-bold ph-arrows-clockwise"></i> Rescan</button>
+                <button type="button" class="control-btn" onclick="manualNetwork()"><i class="ph-bold ph-plus"></i> Other network</button>
+            </div>
+        </div>
+
+        <!-- Step 2: password -->
+        <div id="wifiPasswordSection" class="wifi-form" style="padding-top: 4px;">
+            <label class="wifi-label" for="modalWifiSsid">Network name</label>
+            <input type="text" id="modalWifiSsid" class="wifi-input" maxlength="32" autocomplete="off" autocapitalize="none" spellcheck="false">
+
+            <div id="wifiPassWrap" style="display: flex; flex-direction: column; gap: 12px;">
+                <label class="wifi-label" for="modalWifiPass">Password</label>
+                <input type="password" id="modalWifiPass" class="wifi-input" placeholder="Wi-Fi password" maxlength="63" autocomplete="off">
+                <label class="wifi-check"><input type="checkbox" id="wifiShowPass" onchange="toggleWifiPassword()"> Show password</label>
+            </div>
+
+            <div id="wifiPinWrap" style="display: none;">
+                <label class="wifi-label" for="modalWifiPin">Dashboard PIN</label>
+                <input type="password" id="modalWifiPin" class="wifi-input" placeholder="PIN" autocomplete="off" style="margin-top: 6px;">
+            </div>
+
+            <div id="wifiFormError" class="wifi-line" style="margin: 0; min-height: 16px;"></div>
+
+            <div class="wifi-buttons">
+                <button type="button" class="control-btn" style="background: rgba(255,255,255,0.05);" onclick="cancelNetworkSelect()">Back</button>
+                <button type="button" id="wifiConnectBtn" class="control-btn" style="background: var(--primary); color: #000;" onclick="submitNetwork()">Connect</button>
+            </div>
+        </div>
+
+        <!-- Step 3: progress / result -->
+        <div id="wifiProgressSection" class="wifi-progress">
+            <i id="wifiProgressIcon" class="ph-bold ph-spinner ph-spin"></i>
+            <p id="wifiProgressText"></p>
+            <button type="button" id="wifiProgressDone" class="control-btn" style="display: none; width: 100%; justify-content: center;" onclick="closeWifiModal()">Done</button>
+        </div>
+
+    </div>
+</div>
+
+<!-- iOS "Add to Home Screen" instructions modal -->
+<div id="iosInstallModal" class="modal" style="display:none;">
+    <div class="modal-card">
+        <i class="ph-fill ph-plant"></i>
+        <h4>Install Brassica</h4>
+        <p>
+            Tap the <i class="ph-bold ph-export"></i> Share icon in Safari's toolbar, then choose
+            <strong>"Add to Home Screen"</strong> to install this dashboard.
+        </p>
+        <button class="control-btn" onclick="closeIosInstallModal()">Got it</button>
+    </div>
+</div>
+
+<!-- Range bars + status words. Tune data-min / data-max / data-ideal-min / data-ideal-max on each .meter -->
+<script>
+(function () {
+    document.querySelectorAll('.meter').forEach(function (m) {
+        var src = document.getElementById(m.dataset.source);
+        if (!src) return;
+        var min = parseFloat(m.dataset.min), max = parseFloat(m.dataset.max);
+        var imin = parseFloat(m.dataset.idealMin), imax = parseFloat(m.dataset.idealMax);
+        var reading = m.closest('.reading');
+        var stateEl = reading && reading.querySelector('.reading-state');
+        function pct(x) { return Math.max(0, Math.min(100, (x - min) / (max - min) * 100)); }
+        m.style.setProperty('--imin', pct(imin).toFixed(1));
+        m.style.setProperty('--imax', pct(imax).toFixed(1));
+        function update() {
+            var v = parseFloat(src.textContent);
+            if (isNaN(v)) {
+                m.style.setProperty('--pct', 0);
+                if (reading) reading.removeAttribute('data-state');
+                if (stateEl) stateEl.textContent = 'No data';
+                return;
+            }
+            m.style.setProperty('--pct', pct(v).toFixed(1));
+            var s = v < imin ? 'low' : v > imax ? 'high' : 'ok';
+            if (reading) reading.setAttribute('data-state', s);
+            if (stateEl) stateEl.textContent = s === 'ok' ? 'In range' : s === 'low' ? 'Low' : 'High';
+        }
+        update();
+        new MutationObserver(update).observe(src, { childList: true, characterData: true, subtree: true });
+    });
+})();
+</script>
+
+<!-- Linked to module EntryPoint -->
+<script type="module" src="/js/main.js"></script>
+
+{% if dev_mode %}
+<!-- DEV MODE: live-reload SSE stream client. -->
+<script>
+(function () {
+    function connect() {
+        const es = new EventSource('/dev/reload-stream');
+        let hasConnected = false;
+        es.onopen = () => { hasConnected = true; };
+        es.onmessage = (e) => {
+            if (e.data === 'reload') {
+                console.log('[DevReload] Frontend change detected — reloading...');
+                location.reload();
+            }
+        };
+        es.onerror = () => {
+            es.close();
+            if (hasConnected) {
+                const retry = setInterval(() => {
+                    fetch('/').then(() => {
+                        clearInterval(retry);
+                        location.reload();
+                    }).catch(() => {});
+                }, 500);
+            } else {
+                setTimeout(connect, 1000);
+            }
+        };
+    }
+    connect();
+})();
+</script>
+{% endif %}
+
+</body>
+</html>

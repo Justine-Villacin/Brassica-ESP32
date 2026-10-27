@@ -1,0 +1,75 @@
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+/* Scrollbar hidden everywhere; the page still scrolls with wheel, touch and keyboard */
+html { height: 100%; overflow: hidden; scroll-behavior: smooth; scrollbar-width: none; -ms-overflow-style: none; }
+html::-webkit-scrollbar, body::-webkit-scrollbar, *::-webkit-scrollbar { display: none; width: 0; height: 0; }
+* { scrollbar-width: none; }
+
+body {
+    font-family: 'Plus Jakarta Sans', sans-serif;
+    background: url('https://images.unsplash.com/photo-1530836369250-ef72a3f5cda8?q=80&w=2000&auto=format&fit=crop') center/cover no-repeat fixed;
+    background-color: #050a07;
+    color: var(--text-main);
+    height: 100%;
+    overflow: hidden;
+    line-height: 1.5;
+    font-variant-numeric: tabular-nums;
+    -webkit-font-smoothing: antialiased;
+}
+
+/* The whole app is exactly one screen tall: nothing scrolls, panels compress to fit */
+.app { position: relative; height: 100vh; height: 100dvh; width: 100%; }
+
+/* Fixed atmosphere behind the glass: a dark veil, green + teal light, fine grain.
+   Glass only looks like glass when there is colour behind it to blur. */
+.app::before {
+    content: ''; position: fixed; inset: 0; z-index: 0; pointer-events: none;
+    background:
+        radial-gradient(55% 40% at 88% 0%, rgba(16, 185, 129, 0.30), transparent 70%),
+        radial-gradient(50% 45% at 0% 100%, rgba(45, 212, 191, 0.18), transparent 70%),
+        radial-gradient(40% 30% at 15% 15%, rgba(79, 195, 247, 0.08), transparent 70%),
+        linear-gradient(180deg, rgba(3, 10, 6, 0.45) 0%, rgba(3, 10, 6, 0.78) 100%);
+}
+.app::after {
+    content: ''; position: fixed; inset: 0; z-index: 0; pointer-events: none; opacity: 0.06;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+.main {
+    position: relative; z-index: 1; width: 100%; max-width: 1760px; height: 100%; margin: 0 auto;
+    display: flex; flex-direction: column; gap: var(--gap);
+    padding: clamp(10px, 2vh, 22px) clamp(14px, 2.2vw, 36px);
+}
+
+.section-header { margin-bottom: clamp(10px, 1.6vh, 18px); }
+.section-header h3 { font-size: 17px; font-weight: 600; letter-spacing: -0.02em; color: var(--text-main); }
+
+footer { display: flex; justify-content: center; margin-top: 50px; padding-top: 20px; border-top: 1px solid var(--border); color: var(--text-muted); font-size: 12px; }
+
+::selection { background: var(--primary-glow); }
+:focus-visible { outline: 2px solid var(--mint); outline-offset: 3px; border-radius: 10px; }
+
+/* Shown by JS when the backend can't be reached */
+.backend-banner {
+    align-items: center; gap: 10px; margin-bottom: 20px; padding: 12px 18px; border-radius: var(--r-card);
+    font-size: 13px; font-weight: 500; background: rgba(255, 107, 129, 0.14); border: 1px solid rgba(255, 107, 129, 0.35);
+    color: #ffc2cb; backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+}
+.backend-banner i { font-size: 18px; color: var(--danger); }
+
+/* iOS "Add to Home Screen" modal (JS toggles display) */
+.modal { position: fixed; inset: 0; z-index: 999; align-items: center; justify-content: center; padding: 20px; background: rgba(0, 0, 0, 0.6); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
+.modal-card {
+    max-width: 360px; width: 100%; padding: 28px; text-align: center; color: var(--text-main);
+    border-radius: var(--r-panel); border: 1px solid var(--border-light);
+    background: linear-gradient(145deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.04)), rgba(8, 20, 14, 0.7);
+    backdrop-filter: blur(28px) saturate(160%); -webkit-backdrop-filter: blur(28px) saturate(160%);
+}
+.modal-card > i { font-size: 40px; color: var(--primary); text-shadow: 0 0 24px var(--primary-glow); }
+.modal-card h4 { margin: 12px 0 8px; font-size: 18px; font-weight: 600; letter-spacing: -0.02em; }
+.modal-card p { font-size: 14px; color: var(--text-muted); line-height: 1.6; margin-bottom: 20px; }
+.modal-card .control-btn { width: 100%; justify-content: center; }
+
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}

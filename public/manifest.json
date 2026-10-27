@@ -1,0 +1,26 @@
+{
+  "name": "Brassica Monitor - ESP32 Greenhouse",
+  "short_name": "Brassica",
+  "description": "Automated ESP32 greenhouse dashboard for Brassica cultivation",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#030a07",
+  "theme_color": "#00ff88",
+  "icons": [
+    {
+      "src": "/icons/icon-192.png",
+      "type": "image/png",
+      "sizes": "192x192",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "type": "image/png",
+      "sizes": "512x512",
+      "purpose": "any maskable"
+    }
+  ]
+}

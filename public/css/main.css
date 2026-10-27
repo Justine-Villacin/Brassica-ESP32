@@ -1,0 +1,40 @@
+@import url('variables.css?v=8');
+@import url('base.css?v=8');
+@import url('header.css?v=8');
+@import url('sensors.css?v=8');
+@import url('automation.css?v=8');
+@import url('dashboard.css?v=8');
+@import url('history.css?v=8');
+@import url('responsive.css?v=8');
+
+
+/* ---- v6.0 additions: footer status, toasts, Wi-Fi setup modal ---- */
+.footer-status { text-align: center; font-size: 12px; color: var(--text-muted); padding: 18px 0 96px; }
+
+.toast-host { position: fixed; left: 50%; bottom: 90px; transform: translateX(-50%); z-index: 1200; display: flex; flex-direction: column; gap: 8px; width: min(92vw, 420px); pointer-events: none; }
+.toast { padding: 12px 16px; border-radius: 12px; font-size: 13px; line-height: 1.4; color: var(--text-main); background: rgba(8, 20, 14, 0.94); border: 1px solid var(--primary); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); box-shadow: 0 8px 30px rgba(0, 0, 0, 0.45); }
+
+.wifi-line { font-size: 12px; line-height: 1.5; margin: 0 0 14px; }
+.wifi-warn { display: none; margin: 0 0 14px; padding: 10px 12px; border-radius: 10px; font-size: 12px; line-height: 1.5; color: #ffe2a3; background: rgba(255, 189, 46, 0.12); border: 1px solid rgba(255, 189, 46, 0.35); }
+.wifi-list { display: flex; flex-direction: column; gap: 8px; max-height: 38vh; overflow-y: auto; padding-right: 4px; }
+.wifi-empty { padding: 16px; text-align: center; color: var(--text-muted); font-size: 13px; line-height: 1.5; }
+.wifi-net { width: 100%; font: inherit; text-align: left; cursor: pointer; padding: 12px 16px; border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 10px; background: rgba(255, 255, 255, 0.03); color: var(--text-main); display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.wifi-net:hover { background: rgba(255, 255, 255, 0.07); }
+.wifi-net-name { font-size: 13px; font-weight: 600; overflow-wrap: anywhere; display: flex; flex-direction: column; gap: 2px; }
+.wifi-net-name small { font-size: 10px; font-weight: 600; color: var(--primary); text-transform: uppercase; letter-spacing: 0.4px; }
+.wifi-net-meta { display: flex; align-items: center; gap: 8px; flex: none; color: var(--text-muted); }
+.wifi-net-meta i { font-size: 16px; }
+.wifi-actions { display: flex; gap: 8px; margin-top: 14px; }
+.wifi-actions .control-btn { flex: 1; justify-content: center; background: rgba(255, 255, 255, 0.05); }
+.wifi-form { display: none; flex-direction: column; gap: 12px; }
+.wifi-form label.wifi-label { font-size: 12px; color: var(--text-muted); margin-bottom: -6px; }
+.wifi-input { padding: 12px 14px; border-radius: 8px; background: rgba(255, 255, 255, 0.04); border: 1px solid rgba(255, 255, 255, 0.08); color: var(--text-main); font-family: inherit; font-size: 13px; outline: none; width: 100%; box-sizing: border-box; }
+.wifi-input[readonly] { opacity: 0.8; }
+.wifi-check { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-muted); }
+.wifi-buttons { display: flex; gap: 8px; }
+.wifi-buttons .control-btn { flex: 1; justify-content: center; }
+.wifi-progress { display: none; flex-direction: column; align-items: center; gap: 14px; text-align: center; padding: 8px 0; }
+.wifi-progress > i { font-size: 40px; }
+.wifi-progress p { margin: 0; font-size: 13px; line-height: 1.6; }
+@keyframes brassicaSpin { to { transform: rotate(360deg); } }
+.ph-spin { display: inline-block; animation: brassicaSpin 1s linear infinite; }

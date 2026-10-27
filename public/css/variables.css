@@ -1,0 +1,43 @@
+:root {
+    /* Brand */
+    --primary: #10b981;
+    --primary-glow: rgba(16, 185, 129, 0.45);
+    --primary-soft: rgba(16, 185, 129, 0.14);
+    --mint: #6ee7b7;
+
+    /* Status */
+    --warning: #ffbd2e;
+    --danger: #ff6b81;
+
+    /* Glass: low alpha so the photo and glows show through the blur */
+    --glass-bg: rgba(8, 20, 14, 0.38);
+    --glass-card: rgba(255, 255, 255, 0.045);
+    --glass-card-hover: rgba(255, 255, 255, 0.075);
+
+    /* Borders */
+    --border: rgba(255, 255, 255, 0.13);
+    --border-light: rgba(255, 255, 255, 0.3);
+    --border-soft: rgba(255, 255, 255, 0.08);
+
+    /* Text */
+    --text-main: #ffffff;
+    --text-muted: rgba(255, 255, 255, 0.64);
+
+    /* Sensor colors */
+    --c-temp: #ff8a65;
+    --c-hum: #4fc3f7;
+    --c-soil: #81c784;
+    --c-light: #ffd54f;
+
+    /* Shape + motion */
+    --r-panel: 28px;
+    --r-card: 18px;
+    --r-pill: 999px;
+    --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+/* Fluid spacing: everything scales with viewport height so the page always fits one screen */
+:root {
+    --pad: clamp(14px, 2.2vh, 26px);
+    --gap: clamp(10px, 1.8vh, 22px);
+}

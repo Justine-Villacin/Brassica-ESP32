@@ -1,0 +1,59 @@
+/* Readings: four cells split by hairlines; each carries a soft glow in its sensor colour */
+.readings { flex: 1; min-height: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: repeat(2, minmax(0, 1fr)); }
+.reading {
+    --state-c: var(--mint); --tone: #fff;
+    position: relative; min-height: 0; display: flex; flex-direction: column; justify-content: space-between; gap: 6px;
+    padding: clamp(12px, 2.2vh, 26px) clamp(16px, 2vw, 30px);
+    border-top: 1px solid var(--border-soft);
+    background: radial-gradient(110% 90% at 100% 0%, color-mix(in srgb, var(--tone) 16%, transparent), transparent 62%);
+}
+.reading:nth-child(odd) { border-right: 1px solid var(--border-soft); }
+.reading[data-state="low"], .reading[data-state="high"] { --state-c: var(--warning); }
+.reading.is-temp { --tone: var(--c-temp); }
+.reading.is-hum { --tone: var(--c-hum); }
+.reading.is-soil { --tone: var(--c-soil); }
+.reading.is-light { --tone: var(--c-light); }
+
+.reading-top { display: flex; align-items: center; gap: 10px; }
+.reading-chip {
+    width: clamp(28px, 3.8vh, 34px); height: clamp(28px, 3.8vh, 34px); border-radius: 11px; display: grid; place-items: center; font-size: 18px; color: var(--tone);
+    background: color-mix(in srgb, var(--tone) 18%, transparent); box-shadow: 0 0 20px color-mix(in srgb, var(--tone) 22%, transparent);
+}
+.reading-label { font-size: 14px; font-weight: 500; color: var(--text-muted); }
+.reading-state {
+    margin-left: auto; padding: 4px 10px; border-radius: var(--r-pill); font-size: 12px; font-weight: 600; color: var(--state-c);
+    background: color-mix(in srgb, var(--state-c) 14%, transparent);
+}
+
+.reading-val {
+    display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px;
+    font-size: clamp(32px, min(7vh, 5vw), 76px); font-weight: 300; line-height: 0.95; letter-spacing: -0.045em; color: var(--text-main);
+    text-shadow: 0 4px 30px color-mix(in srgb, var(--tone) 35%, transparent);
+}
+.reading-val small { font-size: 18px; font-weight: 500; letter-spacing: 0; color: var(--text-muted); text-shadow: none; }
+
+/* Range bar: faint track, lit ideal band, glowing pin for the current value */
+.meter { position: relative; height: 6px; margin-top: 4px; border-radius: 99px; background: rgba(255, 255, 255, 0.12); }
+.meter-ideal { position: absolute; top: 0; bottom: 0; left: calc(var(--imin, 0) * 1%); width: calc((var(--imax, 0) - var(--imin, 0)) * 1%); border-radius: 99px; background: rgba(110, 231, 183, 0.4); }
+.meter-pin {
+    position: absolute; top: 50%; left: calc(var(--pct, 0) * 1%); width: 16px; height: 16px; border-radius: 50%;
+    background: #fff; border: 3px solid var(--state-c); transform: translate(-50%, -50%);
+    box-shadow: 0 0 14px var(--state-c); transition: left 0.8s var(--ease), border-color 0.4s, box-shadow 0.4s;
+}
+.reading:not([data-state]) .meter-pin { opacity: 0; }
+
+/* Recent: one slim strip */
+.panel-strip { display: flex; align-items: center; gap: 18px; padding: clamp(8px, 1.4vh, 14px) clamp(14px, 1.6vw, 22px); }
+.strip-title { flex: none; font-size: 15px; font-weight: 600; letter-spacing: -0.02em; }
+.history-list { flex: 1; min-width: 0; display: flex; gap: 12px; }
+.history-item {
+    flex: 1 1 0; min-width: 0; display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; padding: clamp(6px, 1vh, 10px) 14px;
+    border-radius: 14px; background: var(--glass-card); border: 1px solid var(--border-soft); transition: background 0.25s;
+}
+.history-item:hover { background: var(--glass-card-hover); }
+.history-date { font-size: 13px; font-weight: 600; color: var(--text-main); }
+.history-stats { display: flex; gap: 10px; font-size: 12px; font-weight: 500; }
+.history-stats span { display: inline-flex; align-items: center; gap: 5px; }
+.history-stats .t { color: var(--c-temp); }
+.history-stats .h { color: var(--c-hum); }
+.history-stats .s { color: var(--c-soil); }

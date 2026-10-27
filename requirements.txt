@@ -1,0 +1,4 @@
+flask==3.0.3
+openpyxl==3.1.5
+redis==5.0.8
+tzdata>=2024.1

@@ -1,0 +1,14 @@
+data/
+sensor_data.csv
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+cert.pem
+key.pem
+requirements-desktop.txt
+desktop.py
+firmware/
+.git/
+.vscode/

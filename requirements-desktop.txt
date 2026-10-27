@@ -1,0 +1,4 @@
+# Local desktop app only — never installed on Vercel.
+# Install with: pip install -r requirements-desktop.txt
+-r requirements.txt
+pywebview==5.3.2

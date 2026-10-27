@@ -1,0 +1,135 @@
+/* Glass panel */
+.panel {
+    position: relative; min-height: 0;
+    background: linear-gradient(145deg, rgba(255, 255, 255, 0.10), rgba(255, 255, 255, 0.03) 45%, rgba(255, 255, 255, 0.012)), var(--glass-bg);
+    backdrop-filter: blur(28px) saturate(160%);
+    -webkit-backdrop-filter: blur(28px) saturate(160%);
+    border: 1px solid var(--border-soft);
+    border-radius: 24px;
+    padding: var(--pad);
+    box-shadow: 0 30px 60px -24px rgba(0, 0, 0, 0.65), inset 0 1px 0 rgba(255, 255, 255, 0.16);
+}
+.panel::before {
+    content: ''; position: absolute; inset: 0; border-radius: inherit; padding: 1px; pointer-events: none;
+    background: linear-gradient(145deg, rgba(255, 255, 255, 0.5), rgba(255, 255, 255, 0) 28%, rgba(255, 255, 255, 0) 72%, rgba(110, 231, 183, 0.28));
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+}
+
+/* One-screen layout: two columns that fill whatever height is left under the header */
+.dashboard-layout { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: var(--gap); }
+.dashboard-column { min-height: 0; display: flex; flex-direction: column; gap: var(--gap); }
+#tab-sensors, #tab-auto { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: var(--gap); }
+#tab-export { flex: none; }
+
+/* Hero panel: soaks up spare height, readings stretch to fill it */
+.panel-hero { flex: 1 1 0; display: flex; flex-direction: column; padding: 0; overflow: hidden; }
+.hero-head { flex: none; display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: clamp(14px, 2.2vh, 24px) clamp(18px, 2vw, 30px) clamp(8px, 1.4vh, 16px); }
+.hero-head h3 { font-size: 16px; font-weight: 600; letter-spacing: -0.02em; }
+.hero-key { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-muted); }
+.hero-key::before { content: ''; width: 22px; height: 6px; border-radius: 99px; background: rgba(110, 231, 183, 0.4); }
+
+/* Insights: side by side, tone fades in from the left */
+.panel-insights, .panel-strip, .panel-climate, .panel-vigor { flex: none; }
+.insights-list { display: flex; gap: 12px; }
+.insight-card {
+    --tone: var(--primary);
+    flex: 1 1 0; min-width: 0; display: flex; gap: 12px; align-items: flex-start; padding: 14px 16px; border-radius: var(--r-card);
+    background: linear-gradient(100deg, color-mix(in srgb, var(--tone) 16%, transparent), color-mix(in srgb, var(--tone) 3%, transparent) 75%);
+    border: 1px solid color-mix(in srgb, var(--tone) 24%, transparent);
+}
+.insight-card.danger { --tone: var(--c-temp); }
+.insight-card.warning { --tone: var(--c-light); }
+.insight-card.success { --tone: var(--primary); }
+.insight-icon {
+    flex: none; width: 36px; height: 36px; border-radius: 12px; display: grid; place-items: center; font-size: 20px;
+    color: var(--tone); background: color-mix(in srgb, var(--tone) 18%, transparent);
+    box-shadow: 0 0 20px color-mix(in srgb, var(--tone) 25%, transparent);
+}
+.insight-info h4 { font-size: 14px; font-weight: 600; color: var(--text-main); }
+.insight-info p { font-size: 12px; color: var(--text-muted); margin-top: 2px; line-height: 1.4; }
+
+/* Climate strip */
+.panel-climate { padding: clamp(10px, 1.6vh, 18px) clamp(14px, 1.6vw, 22px); }
+.climate-box { display: flex; align-items: center; gap: 14px; }
+.climate-icon {
+    flex: none; width: clamp(38px, 5.2vh, 46px); height: clamp(38px, 5.2vh, 46px); border-radius: 14px; display: grid; place-items: center; font-size: 24px; color: #04130c;
+    background: linear-gradient(145deg, #6ee7b7, #10b981); box-shadow: 0 0 24px var(--primary-glow), inset 0 1px 0 rgba(255, 255, 255, 0.45);
+}
+.climate-text { font-size: 13px; color: var(--text-muted); }
+.climate-text strong { font-size: 15px; font-weight: 600; color: var(--text-main); display: block; }
+
+/* Plant health: the one ring gauge */
+.vigor-card { display: flex; align-items: center; gap: 20px; }
+.vigor-ring { --pct: 98; --ring: clamp(64px, 9vh, 92px); position: relative; flex: none; width: var(--ring); height: var(--ring); display: grid; place-items: center; filter: drop-shadow(0 0 14px var(--primary-glow)); }
+.ring-arc {
+    position: absolute; inset: 0; border-radius: 50%;
+    background: conic-gradient(from -90deg, var(--mint), var(--primary) calc(var(--pct) * 1%), rgba(255, 255, 255, 0.1) 0);
+    -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 8px), #000 calc(100% - 7px));
+    mask: radial-gradient(farthest-side, transparent calc(100% - 8px), #000 calc(100% - 7px));
+}
+.vigor-ring strong { position: relative; font-size: clamp(18px, 2.8vh, 24px); font-weight: 300; letter-spacing: -0.04em; color: var(--text-main); }
+.vigor-lead h4 { font-size: 15px; font-weight: 600; color: var(--text-main); }
+.vigor-lead p { font-size: 13px; color: var(--text-muted); margin-top: 2px; }
+.vigor-lead span { display: inline-block; margin-top: 8px; padding: 3px 10px; border-radius: var(--r-pill); font-size: 12px; font-weight: 600; color: var(--mint); background: var(--primary-soft); }
+
+/* Automation panel stretches; its rows share the height */
+.panel-auto { flex: 1 1 auto; display: flex; flex-direction: column; }
+/* Toggle Switch Styles */
+.toggle-switch {
+  position: relative;
+  display: inline-block;
+  width: 44px;
+  height: 24px;
+}
+
+.toggle-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.toggle-switch .slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background-color: rgba(255, 255, 255, 0.1);
+  transition: 0.3s;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.toggle-switch .slider:before {
+  position: absolute;
+  content: "";
+  height: 18px;
+  width: 18px;
+  left: 2px;
+  bottom: 2px;
+  background-color: white;
+  transition: 0.3s;
+}
+
+/* ON State */
+.toggle-switch input:checked + .slider {
+  background-color: var(--primary);
+  border-color: var(--primary);
+}
+
+.toggle-switch input:checked + .slider:before {
+  transform: translateX(20px);
+}
+
+/* Rounded styling */
+.toggle-switch .slider.round {
+  border-radius: 24px;
+}
+.toggle-switch .slider.round:before {
+  border-radius: 50%;
+}
+
+/* Disabled/Loading state */
+.toggle-switch input:disabled + .slider {
+    opacity: 0.5;
+    cursor: not-allowed;
+}

@@ -1,0 +1,9 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "functions": {
+    "app.py": {
+      "maxDuration": 15,
+      "excludeFiles": "{desktop.py,requirements-desktop.txt,firmware/**,*.csv,cert.pem,key.pem}"
+    }
+  }
+}
