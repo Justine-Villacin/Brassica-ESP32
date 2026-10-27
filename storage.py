@@ -315,13 +315,27 @@ def _sync_csv_into_redis(client):
             return
 
         by_ts = {r["timestamp"]: r for r in csv_rows}
+        seen_buckets = set()
+        # Existing rows are newest first. Keep only one row per 5-minute slot,
+        # which also clears the burst of every-2-seconds rows an ESP32 with
+        # unplugged sensors can leave behind.
         for raw in client.lrange(KEY_HISTORY, 0, -1):
             try:
                 r = json.loads(raw)
             except (TypeError, ValueError):
                 continue
-            if isinstance(r, dict) and r.get("timestamp"):
-                by_ts[str(r["timestamp"])] = r  # live row overrides CSV
+            if not (isinstance(r, dict) and r.get("timestamp")):
+                continue
+            ts = str(r["timestamp"])
+            bucket = ts  # fallback if the timestamp is not the usual format
+            try:
+                bucket = ts[:14] + "%02d" % (int(ts[14:16]) // 5 * 5)
+            except ValueError:
+                pass
+            if bucket in seen_buckets:
+                continue
+            seen_buckets.add(bucket)
+            by_ts[ts] = r  # live row overrides CSV
 
         merged = sorted(by_ts.values(), key=lambda r: str(r["timestamp"]))[-MAX_HISTORY:]
         # List order in Redis is newest first (LPUSH), so write it reversed.
