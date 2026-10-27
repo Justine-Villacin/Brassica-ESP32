@@ -636,9 +636,11 @@ def _history_rows_from_local_csv():
 
 def _resolve_history_rows():
     """Returns (rows, source); source is None if there is nothing to export."""
-    local_rows = _history_rows_from_local_csv()
-    if local_rows is not None:
-        return local_rows, "local"
+    # On Vercel, NEVER check local CSV files — go straight to cloud Redis/store.
+    if not ON_VERCEL:
+        local_rows = _history_rows_from_local_csv()
+        if local_rows is not None:
+            return local_rows, "local"
 
     rows = _history_rows_from_store()
     if rows:
