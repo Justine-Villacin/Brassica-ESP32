@@ -465,33 +465,14 @@ def update_from_esp32():
     # row on every post would use up a free Redis plan within days.
     history_row = None
     if _as_bool(data.get("log"), True):
-        # Fallback to the last known live dashboard state if ESP32 omits the reading
-        latest_state = storage.get_latest() or {}
-
-        soil1_val = values.get("soil_1") if "soil_1" in values else data.get("soil_1")
-        if soil1_val is None:
-            soil1_val = latest_state.get("soil1")
-
-        soil2_val = values.get("soil_2") if "soil_2" in values else data.get("soil_2")
-        if soil2_val is None:
-            soil2_val = latest_state.get("soil2")
-
-        try:
-            soil1_num = float(soil1_val) if soil1_val is not None else "ERR"
-        except (TypeError, ValueError):
-            soil1_num = "ERR"
-
-        try:
-            soil2_num = float(soil2_val) if soil2_val is not None else "ERR"
-        except (TypeError, ValueError):
-            soil2_num = "ERR"
-
+        # Log only what the sensors measured in THIS post. A disconnected or
+        # missing sensor is "ERR" (left out of averages), never a stale value.
         history_row = {
             "timestamp": datetime.fromtimestamp(now, LOCAL_TZ).strftime("%Y-%m-%d %H:%M:%S"),
-            "temp": values.get("temperature", "ERR") if dht_ok else "ERR",
-            "hum": values.get("humidity", "ERR") if dht_ok else "ERR",
-            "soil1": soil1_num,
-            "soil2": soil2_num,
+            "temp":  values["temperature"] if dht_ok   and "temperature" in values else "ERR",
+            "hum":   values["humidity"]    if dht_ok   and "humidity"    in values else "ERR",
+            "soil1": values["soil_1"]      if soil1_ok and "soil_1"      in values else "ERR",
+            "soil2": values["soil_2"]      if soil2_ok and "soil_2"      in values else "ERR",
             "pump": pump,
             "fan": fan,
         }
@@ -846,8 +827,7 @@ def api_history():
     on Oct 27 it is Oct 21-27, on Oct 28 it becomes Oct 22-28. A day with no
     readings is still listed, with "--" values."""
     rows, _source = _resolve_history_rows()
-    if not rows:
-        return jsonify({"status": "success", "history": [], "demo": False})
+    rows = rows or []
     is_demo = bool(_source) and str(_source).startswith("demo")
 
     daily = {}
@@ -902,6 +882,7 @@ def api_history():
         history.append({
             "date": day.strftime("%b %d"),
             "has_data": bool(b["t"] or b["h"] or b["s1"] or b["s2"]),
+            "samples": max(len(b["t"]), len(b["h"]), len(b["s1"]), len(b["s2"])),
             "temp": round(sum(b["t"]) / len(b["t"]), 1) if b["t"] else "--",
             "hum": round(sum(b["h"]) / len(b["h"]), 1) if b["h"] else "--",
             "soil1": round(sum(b["s1"]) / len(b["s1"]), 1) if b["s1"] else "--",

@@ -1,14 +1,23 @@
 """
 storage.py — shared state store for Brassica (Serverless & Desktop safe).
+
+History fixes in this version:
+  * Only ONE history row is saved per LOG_INTERVAL_SECONDS (default 300 s),
+    enforced here on the server, so a chatty ESP32 can no longer fill the
+    list and push older days out.
+  * The list keeps 14 days of 5-minute rows (MAX_HISTORY), not ~7.
+  * No fake/sample rows are ever written. The old fallback that invented
+    constant readings (28.5 C / 70 % / 68 % / 73 %) has been removed.
+  * A local sensor_data.csv (if one ships with the app) is MERGED into Redis
+    once, so past days can be restored. Real rows already in Redis win.
 """
 
+import csv
 import json
 import os
 import threading
 import time
 from collections import deque
-import random
-from datetime import datetime, timedelta
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -20,6 +29,13 @@ def _normalise_redis_url(url):
     return url
 
 
+def _env_int(name, default):
+    try:
+        return int(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        return default
+
+
 REDIS_URL = _normalise_redis_url(
     (os.environ.get("REDIS_URL") or os.environ.get("KV_URL") or "").strip() or None
 )
@@ -28,7 +44,15 @@ ON_VERCEL = bool(os.environ.get("VERCEL"))
 PREFIX = "brassica:"
 KEY_LATEST = PREFIX + "latest"
 KEY_HISTORY = PREFIX + "history"
-MAX_HISTORY = 2100
+KEY_LOG_GATE = PREFIX + "log_gate"
+KEY_CSV_SYNCED = PREFIX + "csv_synced"
+
+# One row per 5 minutes = 288 rows/day. 4100 rows ~ 14 days.
+MAX_HISTORY = _env_int("BRASSICA_MAX_HISTORY", 4100)
+LOG_INTERVAL_SECONDS = max(10, _env_int("BRASSICA_LOG_INTERVAL", 300))
+# The gate expires a little early so a firmware timer that drifts a few
+# seconds never causes a skipped 5-minute row.
+_LOG_GATE_SECONDS = max(5, LOG_INTERVAL_SECONDS - 10)
 
 try:
     DISCONNECT_TIMEOUT_SECONDS = float(os.environ.get("BRASSICA_DISCONNECT_TIMEOUT", "35"))
@@ -127,6 +151,7 @@ _mem_lock = threading.Lock()
 _mem_latest = dict(DEFAULT_STATE)
 _mem_history = deque(maxlen=MAX_HISTORY)
 _mem_kv = {}
+_mem_last_log = 0.0
 
 _cache_lock = threading.Lock()
 _cache_latest = None
@@ -197,16 +222,24 @@ def patch_latest(fields):
 
 
 def record_update(fields, history_row=None):
+    """Saves the live state and, at most once per LOG_INTERVAL_SECONDS,
+    one history row. Extra rows offered inside the interval are ignored."""
+    global _mem_last_log
     if REDIS_URL:
         mapping = {k: json.dumps(v) for k, v in fields.items()}
 
         def op(client):
-            if history_row is None:
+            row = history_row
+            if row is not None:
+                # SET NX returns True only for the first row in each interval.
+                if not client.set(KEY_LOG_GATE, "1", nx=True, ex=_LOG_GATE_SECONDS):
+                    row = None
+            if row is None:
                 client.hset(KEY_LATEST, mapping=mapping)
                 return
             pipe = client.pipeline()
             pipe.hset(KEY_LATEST, mapping=mapping)
-            pipe.lpush(KEY_HISTORY, json.dumps(history_row))
+            pipe.lpush(KEY_HISTORY, json.dumps(row))
             pipe.ltrim(KEY_HISTORY, 0, MAX_HISTORY - 1)
             pipe.execute()
 
@@ -215,74 +248,106 @@ def record_update(fields, history_row=None):
     with _mem_lock:
         _mem_latest.update(fields)
         if history_row is not None:
-            _mem_history.appendleft(history_row)
+            now = time.time()
+            if now - _mem_last_log >= _LOG_GATE_SECONDS:
+                _mem_last_log = now
+                _mem_history.appendleft(history_row)
 
 
 # ---------------------------------------------------------------------------
-# Auto-seed helper & History fetching
+# Restoring past days from a local sensor_data.csv (real data only)
 # ---------------------------------------------------------------------------
 
-def _auto_seed_history_sync(client):
-    """Guaranteed synchronous seeding from local sensor_data.csv into Redis."""
+_csv_checked = False
+
+
+def _num_or_err(value):
+    """CSV cell -> float, or "ERR" for blank / ERR / non-numeric cells."""
     try:
-        if client.llen(KEY_HISTORY) > 0:
-            return  # Already populated
+        return float(str(value).replace("°C", "").replace("%", "").strip())
+    except (TypeError, ValueError):
+        return "ERR"
 
-        csv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sensor_data.csv")
-        history_list = []
-        
-        if os.path.exists(csv_path):
-            with open(csv_path, "r", encoding="utf-8", newline="") as f:
-                reader = csv.reader(f)
-                header = next(reader, None) # Skip header
-                for row in reader:
-                    if not row or len(row) < 7:
-                        continue
-                    try:
-                        history_list.append({
-                            "timestamp": row[0],
-                            "temp": float(row[1]) if row[1] != "ERR" else "ERR",
-                            "hum": float(row[2]) if row[2] != "ERR" else "ERR",
-                            "soil1": float(row[3]) if row[3] != "ERR" else "ERR",
-                            "soil2": float(row[4]) if row[4] != "ERR" else "ERR",
-                            "pump": str(row[5]).strip().lower() in ("true", "1", "active", "on"),
-                            "fan": str(row[6]).strip().lower() in ("true", "1", "active", "on"),
-                        })
-                    except (ValueError, TypeError):
-                        continue
 
-        # Fallback if CSV is missing or empty
-        if not history_list:
-            start_date = datetime(2026, 10, 19, 0, 0, 0)
-            end_date = datetime(2026, 10, 26, 23, 55, 0)
-            current = start_date
-            while current <= end_date:
-                timestamp = current.strftime("%Y-%m-%d %H:%M:%S")
-                history_list.append({
-                    "timestamp": timestamp,
-                    "temp": 28.5,
-                    "hum": 70.0,
-                    "soil1": 68.0,
-                    "soil2": 73.0,
-                    "pump": False,
-                    "fan": False
+def _truthy(value):
+    return str(value).strip().lower() in ("true", "1", "active", "on")
+
+
+def _read_local_csv():
+    """Returns (rows, signature). rows are history dicts; [] if no usable CSV."""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sensor_data.csv")
+    if not os.path.exists(path):
+        return [], None
+    rows = []
+    try:
+        with open(path, "r", encoding="utf-8", newline="") as f:
+            reader = csv.reader(f)
+            next(reader, None)  # header
+            for row in reader:
+                if not row or len(row) < 7 or not str(row[0]).strip():
+                    continue
+                rows.append({
+                    "timestamp": str(row[0]).split(".")[0].strip(),
+                    "temp": _num_or_err(row[1]),
+                    "hum": _num_or_err(row[2]),
+                    "soil1": _num_or_err(row[3]),
+                    "soil2": _num_or_err(row[4]),
+                    "pump": _truthy(row[5]),
+                    "fan": _truthy(row[6]),
                 })
-                current += timedelta(minutes=5)
+        sig = f"{os.path.getsize(path)}-{int(os.path.getmtime(path))}"
+    except Exception as exc:  # noqa: BLE001 - never break the dashboard over a CSV
+        print(f"[storage] Could not read sensor_data.csv: {exc}")
+        return [], None
+    return rows, sig
 
-        if history_list:
-            json_rows = [json.dumps(row) for row in history_list]
-            client.rpush(KEY_HISTORY, *json_rows)
-            print(f"[storage] Successfully seeded {len(history_list)} records from CSV into Redis!")
-    except Exception as exc:
-        print(f"[storage] CSV Seeding error: {exc}")
-        
-        
+
+def _sync_csv_into_redis(client):
+    """Merges sensor_data.csv into the Redis history ONCE per CSV version.
+    Rows already in Redis win over CSV rows with the same timestamp."""
+    global _csv_checked
+    if _csv_checked:
+        return
+    _csv_checked = True
+    try:
+        csv_rows, sig = _read_local_csv()
+        if not csv_rows or client.get(KEY_CSV_SYNCED) == sig:
+            return
+
+        by_ts = {r["timestamp"]: r for r in csv_rows}
+        for raw in client.lrange(KEY_HISTORY, 0, -1):
+            try:
+                r = json.loads(raw)
+            except (TypeError, ValueError):
+                continue
+            if isinstance(r, dict) and r.get("timestamp"):
+                by_ts[str(r["timestamp"])] = r  # live row overrides CSV
+
+        merged = sorted(by_ts.values(), key=lambda r: str(r["timestamp"]))[-MAX_HISTORY:]
+        # List order in Redis is newest first (LPUSH), so write it reversed.
+        payload = [json.dumps(r) for r in reversed(merged)]
+
+        pipe = client.pipeline()
+        pipe.delete(KEY_HISTORY)
+        pipe.rpush(KEY_HISTORY, *payload)
+        pipe.set(KEY_CSV_SYNCED, sig)
+        pipe.execute()
+        print(f"[storage] Merged sensor_data.csv into Redis: {len(merged)} rows total.")
+    except Exception as exc:  # noqa: BLE001
+        print(f"[storage] CSV restore error: {exc}")
+
+
+# ---------------------------------------------------------------------------
+# History fetching
+# ---------------------------------------------------------------------------
+
 def get_history():
+    """History rows, oldest first."""
     if REDIS_URL:
         def _fetch_history(client):
-            _auto_seed_history_sync(client)
+            _sync_csv_into_redis(client)
             return client.lrange(KEY_HISTORY, 0, MAX_HISTORY - 1)
-            
+
         raw_rows = _run(_fetch_history)
         rows = []
         for raw in raw_rows:
