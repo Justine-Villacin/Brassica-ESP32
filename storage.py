@@ -274,31 +274,41 @@ def _truthy(value):
 
 
 def _read_local_csv():
-    """Returns (rows, signature). rows are history dicts; [] if no usable CSV."""
-    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sensor_data.csv")
-    if not os.path.exists(path):
-        return [], None
-    rows = []
+    """Returns (rows, signature) from seed_history.py, else sensor_data.csv.
+    rows are history dicts; [] if nothing usable."""
+    text, sig = None, None
     try:
-        with open(path, "r", encoding="utf-8", newline="") as f:
-            reader = csv.reader(f)
-            next(reader, None)  # header
-            for row in reader:
-                if not row or len(row) < 7 or not str(row[0]).strip():
-                    continue
-                rows.append({
-                    "timestamp": str(row[0]).split(".")[0].strip(),
-                    "temp": _num_or_err(row[1]),
-                    "hum": _num_or_err(row[2]),
-                    "soil1": _num_or_err(row[3]),
-                    "soil2": _num_or_err(row[4]),
-                    "pump": _truthy(row[5]),
-                    "fan": _truthy(row[6]),
-                })
-        sig = f"{os.path.getsize(path)}-{int(os.path.getmtime(path))}"
-    except Exception as exc:  # noqa: BLE001 - never break the dashboard over a CSV
-        print(f"[storage] Could not read sensor_data.csv: {exc}")
-        return [], None
+        import hashlib
+        import seed_history  # bundled with the code, so it always deploys
+        text = seed_history.csv_text()
+        sig = "seed-" + hashlib.md5(text.encode("utf-8")).hexdigest()[:12]
+    except Exception:  # noqa: BLE001 - module missing: fall back to the file
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sensor_data.csv")
+        if not os.path.exists(path):
+            return [], None
+        try:
+            with open(path, "r", encoding="utf-8", newline="") as f:
+                text = f.read()
+            sig = f"{os.path.getsize(path)}-{int(os.path.getmtime(path))}"
+        except Exception as exc:  # noqa: BLE001
+            print(f"[storage] Could not read sensor_data.csv: {exc}")
+            return [], None
+
+    rows = []
+    reader = csv.reader(text.splitlines())
+    next(reader, None)  # header
+    for row in reader:
+        if not row or len(row) < 7 or not str(row[0]).strip():
+            continue
+        rows.append({
+            "timestamp": str(row[0]).split(".")[0].strip(),
+            "temp": _num_or_err(row[1]),
+            "hum": _num_or_err(row[2]),
+            "soil1": _num_or_err(row[3]),
+            "soil2": _num_or_err(row[4]),
+            "pump": _truthy(row[5]),
+            "fan": _truthy(row[6]),
+        })
     return rows, sig
 
 
