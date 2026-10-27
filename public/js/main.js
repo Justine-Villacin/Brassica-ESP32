@@ -174,18 +174,22 @@ async function loadHistoricalData() {
         const data = await response.json();
 
         if (data.status === "success" && data.history.length > 0) {
+            // Days with no readings come back as "--": never print "--%" or "--°".
+            const fmt = (v, unit) => (v === "--" || v === null || v === undefined) ? "--" : `${v}${unit}`;
+
             const recentList = document.querySelector(".panel-strip .history-list");
             if (recentList) {
                 recentList.innerHTML = "";
-                data.history.slice(-1).forEach(day => {
+                // Show the latest day that actually has readings.
+                data.history.filter(d => d.has_data).slice(-1).forEach(day => {
                     recentList.innerHTML += `
                         <div class="history-item">
                             <span class="history-date">${day.date}</span>
                             <div class="history-stats">
-                                <span class="t"><i class="ph-fill ph-thermometer"></i> ${day.temp}&deg;C</span>
-                                <span class="h"><i class="ph-fill ph-drop"></i> ${day.hum}%</span>
-                                <span class="s" title="Soil 1"><i class="ph-fill ph-potted-plant"></i> S1: ${day.soil1}%</span>
-                                <span class="s" title="Soil 2"><i class="ph-fill ph-potted-plant"></i> S2: ${day.soil2}%</span>
+                                <span class="t"><i class="ph-fill ph-thermometer"></i> ${fmt(day.temp, "&deg;C")}</span>
+                                <span class="h"><i class="ph-fill ph-drop"></i> ${fmt(day.hum, "%")}</span>
+                                <span class="s" title="Soil 1"><i class="ph-fill ph-potted-plant"></i> S1: ${fmt(day.soil1, "%")}</span>
+                                <span class="s" title="Soil 2"><i class="ph-fill ph-potted-plant"></i> S2: ${fmt(day.soil2, "%")}</span>
                             </div>
                         </div>`;
                 });
@@ -200,10 +204,10 @@ async function loadHistoricalData() {
                             <div style="display: flex; flex-direction: column; gap: 2px;">
                                 <span style="font-size: 11px; font-weight: 600; color: var(--text-main);">${day.date}</span>
                             </div>
-                            <div style="text-align: center; color: var(--c-temp); font-size: 11px; font-weight: 700;">${day.temp}&deg;</div>
-                            <div style="text-align: center; color: var(--c-hum); font-size: 11px; font-weight: 700;">${day.hum}%</div>
-                            <div style="text-align: center; color: var(--c-soil); font-size: 11px; font-weight: 700;">${day.soil1}%</div>
-                            <div style="text-align: right; color: var(--c-soil); font-size: 11px; font-weight: 700;">${day.soil2}%</div>
+                            <div style="text-align: center; color: var(--c-temp); font-size: 11px; font-weight: 700;">${fmt(day.temp, "&deg;")}</div>
+                            <div style="text-align: center; color: var(--c-hum); font-size: 11px; font-weight: 700;">${fmt(day.hum, "%")}</div>
+                            <div style="text-align: center; color: var(--c-soil); font-size: 11px; font-weight: 700;">${fmt(day.soil1, "%")}</div>
+                            <div style="text-align: right; color: var(--c-soil); font-size: 11px; font-weight: 700;">${fmt(day.soil2, "%")}</div>
                         </div>`;
                 });
             }

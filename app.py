@@ -758,7 +758,9 @@ def download_excel_file():
     )
 @app.route("/api/history")
 def api_history():
-    """Daily averages for the last 7 days that have data."""
+    """Daily averages for the 7 calendar days ending today (local time zone):
+    on Oct 27 it is Oct 21-27, on Oct 28 it becomes Oct 22-28. A day with no
+    readings is still listed, with "--" values."""
     rows, _source = _resolve_history_rows()
     if not rows:
         return jsonify({"status": "success", "history": []})
@@ -805,15 +807,16 @@ def api_history():
         if s1_num is not None: bucket["s1"].append(s1_num)
         if s2_num is not None: bucket["s2"].append(s2_num)
 
-    # Sort dates chronologically and take the most recent 7 days
-    sorted_days = sorted(daily.keys())
-    recent_days = sorted_days[-7:]
+    # Rolling window: today and the 6 days before it, oldest first.
+    today = datetime.now(LOCAL_TZ).date()
+    window = [today - timedelta(days=i) for i in range(6, -1, -1)]
 
     history = []
-    for day in recent_days:
-        b = daily[day]
+    for day in window:
+        b = daily.get(day) or {"t": [], "h": [], "s1": [], "s2": []}
         history.append({
             "date": day.strftime("%b %d"),
+            "has_data": bool(b["t"] or b["h"] or b["s1"] or b["s2"]),
             "temp": round(sum(b["t"]) / len(b["t"]), 1) if b["t"] else "--",
             "hum": round(sum(b["h"]) / len(b["h"]), 1) if b["h"] else "--",
             "soil1": round(sum(b["s1"]) / len(b["s1"]), 1) if b["s1"] else "--",
