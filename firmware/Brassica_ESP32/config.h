@@ -84,9 +84,9 @@
 // The numbers below are only placeholders. Your sensors will be different,
 // and two sensors of the same model usually differ from each other too.
 #define SOIL1_RAW_DRY         3300
-#define SOIL1_RAW_WET         2000
+#define SOIL1_RAW_WET         1500
 #define SOIL2_RAW_DRY         3000
-#define SOIL2_RAW_WET         480
+#define SOIL2_RAW_WET         390
 
 // ============================================================
 // Soil reading quality
@@ -117,10 +117,10 @@
 // ============================================================
 // Exhaust fans (temperature). Both default to the same values so they run
 // together. To run them in stages, give fan 2 a HIGHER temperature than fan 1.
-#define TEMP_FAN1_ON_C         30.0   // fan 1 ON at/above this
-#define TEMP_FAN1_OFF_C        29.9   // fan 1 OFF at/below this
-#define TEMP_FAN2_ON_C         30.0   // fan 2 ON at/above this
-#define TEMP_FAN2_OFF_C        29.9   // fan 2 OFF at/below this
+#define TEMP_FAN1_ON_C         28   // fan 1 ON at/above this
+#define TEMP_FAN1_OFF_C        27.9   // fan 1 OFF at/below this
+#define TEMP_FAN2_ON_C         28   // fan 2 ON at/above this
+#define TEMP_FAN2_OFF_C        27.9   // fan 2 OFF at/below this
 
 // Pump (soil moisture) — AUTOMATIC mode only.
 #define SOIL_PUMP_ON_PCT        60    // pump ON at/below this

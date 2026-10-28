@@ -87,6 +87,16 @@ export async function downloadFile(url, filename) {
         }
 
         const blob = await response.blob();
+        // A real .xlsx always starts with "PK". Anything else is not a spreadsheet.
+        if (/\.xlsx$/i.test(filename)) {
+            const head = await blob.slice(0, 2).text();
+            if (head !== "PK") {
+                const preview = (await blob.slice(0, 120).text()).replace(/\s+/g, " ");
+                console.error("Export is not a valid .xlsx. It starts with:", preview);
+                logActivity("The server did not send a real Excel file. Nothing was saved.", "danger");
+                return;
+            }
+        }
         const link = document.createElement("a");
         link.href = URL.createObjectURL(blob);
         link.download = filename;
