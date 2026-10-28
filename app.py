@@ -781,7 +781,8 @@ def _resolve_history_rows():
 
 @app.route("/sensor_data.csv")
 def download_csv_file():
-    rows, source = _resolve_history_rows()
+    # Exports contain real sensor readings only, never demo/sample days.
+    rows, source = _resolve_real_history_rows()
     if source is None:
         return _export_unavailable(
             "No sensor history is available yet. It appears once your ESP32 "
@@ -836,7 +837,9 @@ def _excel_sheet_name(raw, used):
 @app.route("/download/excel")
 def download_excel_file():
     try:
-        rows, source = _resolve_history_rows()
+        # Real readings only: demo/sample days (BRASSICA_DEMO_DATA) are for the
+        # dashboard charts and must never end up in the exported spreadsheet.
+        rows, source = _resolve_real_history_rows()
         if source is None:
             return _export_unavailable(
                 "No sensor history is available yet, so there is nothing to "
@@ -853,9 +856,14 @@ def download_excel_file():
             date_str = str(row[0]).strip().split(" ")[0] or "Data"
             days_data.setdefault(date_str, []).append(row)
 
+        # Always include today's sheet (local time zone), even before the first
+        # reading of the day, and list sheets newest-first so Excel opens on today.
+        today_str = datetime.now(LOCAL_TZ).strftime("%Y-%m-%d")
+        days_data.setdefault(today_str, [])
+
         used = set()
         if days_data:
-            for date_str in sorted(days_data):
+            for date_str in sorted(days_data, reverse=True):
                 ws = wb.create_sheet(title=_excel_sheet_name(date_str, used))
                 ws.append(CSV_HEADERS)
                 for r in days_data[date_str]:
@@ -865,6 +873,8 @@ def download_excel_file():
         else:
             ws = wb.create_sheet(title="Data")
             ws.append(CSV_HEADERS)
+
+        wb.active = 0  # open on the newest day (today)
 
         mem = io.BytesIO()
         wb.save(mem)
