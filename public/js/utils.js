@@ -48,11 +48,21 @@ function showToast(message, color) {
         host = document.createElement("div");
         host.id = "toastHost";
         host.className = "toast-host";
+        // Inline fallback so toasts are visible even without matching CSS.
+        Object.assign(host.style, {
+            position: "fixed", left: "50%", bottom: "24px", transform: "translateX(-50%)",
+            zIndex: "99999", display: "flex", flexDirection: "column", gap: "8px",
+            alignItems: "center", pointerEvents: "none", maxWidth: "90vw",
+        });
         document.body.appendChild(host);
     }
     const toast = document.createElement("div");
     toast.className = "toast";
     toast.style.borderColor = color;
+    Object.assign(toast.style, {
+        background: "#1f2937", color: "#fff", padding: "10px 16px", borderRadius: "10px",
+        border: `1px solid ${color}`, fontSize: "14px", boxShadow: "0 4px 16px rgba(0,0,0,.35)",
+    });
     toast.textContent = message;
     host.appendChild(toast);
     setTimeout(() => toast.remove(), 5000);
@@ -75,12 +85,12 @@ export async function downloadFile(url, filename) {
         const contentType = response.headers.get("Content-Type") || "";
 
         if (!response.ok || contentType.includes("application/json")) {
-            let message = "Export failed. Please try again.";
+            let message = `Export failed (HTTP ${response.status}). Please try again.`;
             try {
                 const body = await response.json();
                 if (body && body.message) message = body.message;
             } catch (_) {
-                // Response wasn't JSON either; keep the default message.
+                // Response wasn't JSON either (e.g. an HTML error page); keep the default message.
             }
             logActivity(message, "warning");
             return;
@@ -103,7 +113,7 @@ export async function downloadFile(url, filename) {
         document.body.appendChild(link);
         link.click();
         link.remove();
-        URL.revokeObjectURL(link.href);
+        setTimeout(() => URL.revokeObjectURL(link.href), 30000);
         logActivity(`Downloaded ${filename}`, "success");
     } catch (err) {
         console.error("Download error:", err);

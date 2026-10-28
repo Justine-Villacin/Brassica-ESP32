@@ -17,6 +17,7 @@ import json
 import math
 import os
 import queue
+import re
 import random
 import secrets
 import threading
@@ -27,6 +28,7 @@ from flask import Flask, Response, jsonify, render_template, request, send_file
 
 import storage
 from openpyxl import Workbook
+from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -800,45 +802,90 @@ def download_csv_file():
     )
 
 
+def _excel_cell(value):
+    """Makes a value safe and useful in Excel: numbers stay numbers (the local
+    CSV gives everything back as text), True/False stay booleans, and
+    characters Excel refuses are dropped."""
+    if value is None:
+        return ""
+    if isinstance(value, (bool, int, float)):
+        return value
+    text = str(value)
+    low = text.strip().lower()
+    if low in ("true", "false"):
+        return low == "true"
+    try:
+        return float(text) if "." in text else int(text)
+    except ValueError:
+        return ILLEGAL_CHARACTERS_RE.sub("", text)
+
+
+def _excel_sheet_name(raw, used):
+    """Sheet names: max 31 chars, none of []:*?/\\ , and unique."""
+    name = re.sub(r"[\[\]:*?/\\]", "-", str(raw)).strip("'") or "Data"
+    name = name[:31]
+    base, n = name, 2
+    while name in used:
+        suffix = f" ({n})"
+        name = base[:31 - len(suffix)] + suffix
+        n += 1
+    used.add(name)
+    return name
+
+
 @app.route("/download/excel")
 def download_excel_file():
-    rows, source = _resolve_history_rows()
-    if source is None:
+    try:
+        rows, source = _resolve_history_rows()
+        if source is None:
+            return _export_unavailable(
+                "No sensor history is available yet, so there is nothing to "
+                "export. It appears once your ESP32 has sent readings."
+            )
+
+        wb = Workbook()
+        wb.remove(wb.active)  # remove the default empty sheet
+
+        days_data = {}
+        for row in rows or []:
+            if not row or str(row[0]).startswith("---"):
+                continue
+            date_str = str(row[0]).strip().split(" ")[0] or "Data"
+            days_data.setdefault(date_str, []).append(row)
+
+        used = set()
+        if days_data:
+            for date_str in sorted(days_data):
+                ws = wb.create_sheet(title=_excel_sheet_name(date_str, used))
+                ws.append(CSV_HEADERS)
+                for r in days_data[date_str]:
+                    ws.append([_excel_cell(v) for v in r[:len(CSV_HEADERS)]])
+                ws.freeze_panes = "A2"
+                ws.column_dimensions["A"].width = 21
+        else:
+            ws = wb.create_sheet(title="Data")
+            ws.append(CSV_HEADERS)
+
+        mem = io.BytesIO()
+        wb.save(mem)
+        mem.seek(0)
+
+        return send_file(
+            mem,
+            as_attachment=True,
+            download_name="Brassica_Data.xlsx",
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+    except storage.StorageError:
+        raise  # handled by the 503 handler above
+    except Exception as exc:  # noqa: BLE001 - report it instead of a bare 500 page
+        app.logger.exception("Excel export failed")
         return _export_unavailable(
-            "No sensor history is available yet, so there is nothing to "
-            "export. It appears once your ESP32 has sent readings."
+            f"Excel export failed on the server ({type(exc).__name__}: {exc}).",
+            status=500,
         )
 
-    wb = Workbook()
-    wb.remove(wb.active)  # remove the default empty sheet
 
-    days_data = {}
-    for row in rows:
-        if not row or str(row[0]).startswith("---"):
-            continue
-        date_str = str(row[0]).split(" ")[0][:31]
-        days_data.setdefault(date_str, []).append(row)
-
-    if days_data:
-        for date_str, day_rows in days_data.items():
-            ws = wb.create_sheet(title=date_str)
-            ws.append(CSV_HEADERS)
-            for r in day_rows:
-                ws.append(r)
-    else:
-        ws = wb.create_sheet(title="Data")
-        ws.append(CSV_HEADERS)
-
-    mem = io.BytesIO()
-    wb.save(mem)
-    mem.seek(0)
-
-    return send_file(
-        mem,
-        as_attachment=True,
-        download_name="Brassica_Data.xlsx",
-        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    )
 @app.route("/api/history")
 def api_history():
     """Daily averages for the 7 calendar days ending today (local time zone):
