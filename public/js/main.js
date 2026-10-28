@@ -229,6 +229,7 @@ setInterval(loadHistoricalData, 5 * 60 * 1000);
 
 let availableLogDates = [];
 let currentLogDateIndex = 0;
+let pinnedLogDate = "";   // "" = follow the newest day; otherwise the day the user is viewing
 
 async function loadAutomationLog(targetDate = "") {
     try {
@@ -261,6 +262,10 @@ async function loadAutomationLog(targetDate = "") {
             const isPump = ev.type === "pump";
             const icon = isPump ? '<i class="ph-fill ph-drop"></i>' : '<i class="ph-fill ph-fan"></i>';
             const color = isPump ? 'var(--primary)' : 'var(--text-muted)';
+            const isOff = ev.action === "off";
+            const badgeText = isOff ? "Stopped" : "Triggered";
+            const badgeColor = isOff ? "var(--text-muted)" : "var(--primary)";
+            const badgeBg = isOff ? "rgba(255,255,255,0.07)" : "var(--primary-soft)";
             
             return `
             <div style="display: flex; align-items: center; justify-content: space-between; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.04); padding: 10px 14px; border-radius: 12px;">
@@ -273,7 +278,7 @@ async function loadAutomationLog(targetDate = "") {
                         <span style="font-size: 10px; color: var(--text-muted);">${ev.time}</span>
                     </div>
                 </div>
-                <span style="font-size: 10px; font-weight: 600; color: var(--primary); background: var(--primary-soft); padding: 2px 8px; border-radius: 50px;">Triggered</span>
+                <span style="font-size: 10px; font-weight: 600; color: ${badgeColor}; background: ${badgeBg}; padding: 2px 8px; border-radius: 50px;">${badgeText}</span>
             </div>`;
         }).join("");
     } catch (err) {
@@ -288,10 +293,18 @@ window.changeActivityDate = function(direction) {
     if (currentLogDateIndex < 0) currentLogDateIndex = 0;
     if (currentLogDateIndex >= availableLogDates.length) currentLogDateIndex = availableLogDates.length - 1;
     
-    loadAutomationLog(availableLogDates[currentLogDateIndex]);
+    // Index 0 is the newest day: keep following it so new events show up on their own.
+    pinnedLogDate = currentLogDateIndex === 0 ? "" : availableLogDates[currentLogDateIndex];
+    loadAutomationLog(pinnedLogDate);
 };
 
-loadAutomationLog();// Refresh timeline every 5 minutes
+// Refresh the log every 15 s while the tab is visible, and as soon as you come back to it.
+loadAutomationLog();
+setInterval(() => { if (!document.hidden) loadAutomationLog(pinnedLogDate); }, 15000);
+document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) loadAutomationLog(pinnedLogDate);
+});
+
 // ---------------------------------------------------------------------------
 // History modal (Wi-Fi modal lives in wifi.js)
 // ---------------------------------------------------------------------------
@@ -325,6 +338,8 @@ async function applyPump(newState, pin) {
         if (res.ok) {
             toggle.checked = newState;
             toast(`Pump manually turned ${newState ? "ON" : "OFF"}`, "success");
+            pinnedLogDate = "";          // jump to the newest day and show the new entry now
+            loadAutomationLog();
             return { ok: true };
         }
         toggle.checked = !newState;

@@ -18,6 +18,7 @@ import os
 import threading
 import time
 from collections import deque
+from datetime import datetime
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -46,6 +47,8 @@ KEY_LATEST = PREFIX + "latest"
 KEY_HISTORY = PREFIX + "history"
 KEY_LOG_GATE = PREFIX + "log_gate"
 KEY_CSV_SYNCED = PREFIX + "csv_synced"
+KEY_EVENTS = PREFIX + "events"
+MAX_EVENTS = 1000
 
 # One row per 5 minutes = 288 rows/day. 4100 rows ~ 14 days.
 MAX_HISTORY = _env_int("BRASSICA_MAX_HISTORY", 4100)
@@ -152,6 +155,7 @@ _mem_latest = dict(DEFAULT_STATE)
 _mem_history = deque(maxlen=MAX_HISTORY)
 _mem_kv = {}
 _mem_last_log = 0.0
+_mem_events = deque(maxlen=MAX_EVENTS)
 
 _cache_lock = threading.Lock()
 _cache_latest = None
@@ -221,37 +225,127 @@ def patch_latest(fields):
         _mem_latest.update(fields)
 
 
-def record_update(fields, history_row=None):
+def _event_dt(ts):
+    try:
+        return datetime.strptime(str(ts)[:19], "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return None
+
+
+def _is_duplicate_event(last, event):
+    """Same device + same action within 60 s of the newest saved event."""
+    if not last:
+        return False
+    if last.get("type") != event.get("type") or last.get("action") != event.get("action"):
+        return False
+    a, b = _event_dt(last.get("ts")), _event_dt(event.get("ts"))
+    return bool(a and b and abs((b - a).total_seconds()) < 60)
+
+
+def add_event(event):
+    """Saves one activity-log event: {"ts","type","action","msg"}.
+    Newest is first in Redis. Near-identical repeats are ignored."""
+    if REDIS_URL:
+        def op(client):
+            last_raw = client.lindex(KEY_EVENTS, 0)
+            try:
+                last = json.loads(last_raw) if last_raw else None
+            except (TypeError, ValueError):
+                last = None
+            if _is_duplicate_event(last, event):
+                return
+            pipe = client.pipeline()
+            pipe.lpush(KEY_EVENTS, json.dumps(event))
+            pipe.ltrim(KEY_EVENTS, 0, MAX_EVENTS - 1)
+            pipe.execute()
+        _run(op)
+        return
+    with _mem_lock:
+        last = _mem_events[0] if _mem_events else None
+        if not _is_duplicate_event(last, event):
+            _mem_events.appendleft(event)
+
+
+def get_events():
+    """Activity-log events, oldest first."""
+    if REDIS_URL:
+        raw_rows = _run(lambda c: c.lrange(KEY_EVENTS, 0, MAX_EVENTS - 1))
+        rows = []
+        for raw in raw_rows:
+            try:
+                rows.append(json.loads(raw))
+            except (TypeError, ValueError):
+                continue
+        rows.reverse()
+        return rows
+    with _mem_lock:
+        return list(reversed(_mem_events))
+
+
+def _auto_events(prev_pump, prev_fan, fields, event_ts, pump_manual, skip_pump=False):
+    """ON transitions seen between the previous and the new device state."""
+    out = []
+    if not event_ts:
+        return out
+    if not skip_pump and fields.get("pump") is True and not prev_pump:
+        out.append({"ts": event_ts, "type": "pump", "action": "on",
+                    "msg": "Water Pump turned ON (manual)" if pump_manual
+                           else "Water Pump turned ON"})
+    if fields.get("fan") is True and not prev_fan:
+        out.append({"ts": event_ts, "type": "fan", "action": "on",
+                    "msg": "Exhaust Fan turned ON"})
+    return out
+
+
+def record_update(fields, history_row=None, event_ts=None, pump_manual=False, skip_pump_events=False):
     """Saves the live state and, at most once per LOG_INTERVAL_SECONDS,
-    one history row. Extra rows offered inside the interval are ignored."""
+    one history row. Extra rows offered inside the interval are ignored.
+    When event_ts is given, pump/fan OFF->ON changes are also written to the
+    activity log, so short runs between history rows are never missed."""
     global _mem_last_log
     if REDIS_URL:
         mapping = {k: json.dumps(v) for k, v in fields.items()}
 
         def op(client):
+            events = []
+            if event_ts:
+                prev = client.hmget(KEY_LATEST, ["pump", "fan"])
+                prev_pump = prev[0] == "true"
+                prev_fan = prev[1] == "true"
+                events = _auto_events(prev_pump, prev_fan, fields, event_ts, pump_manual, skip_pump_events)
+
             row = history_row
             if row is not None:
                 # SET NX returns True only for the first row in each interval.
                 if not client.set(KEY_LOG_GATE, "1", nx=True, ex=_LOG_GATE_SECONDS):
                     row = None
-            if row is None:
-                client.hset(KEY_LATEST, mapping=mapping)
-                return
+
             pipe = client.pipeline()
             pipe.hset(KEY_LATEST, mapping=mapping)
-            pipe.lpush(KEY_HISTORY, json.dumps(row))
-            pipe.ltrim(KEY_HISTORY, 0, MAX_HISTORY - 1)
+            if row is not None:
+                pipe.lpush(KEY_HISTORY, json.dumps(row))
+                pipe.ltrim(KEY_HISTORY, 0, MAX_HISTORY - 1)
             pipe.execute()
+            return events
 
-        _run(op)
+        events = _run(op) or []
+        for ev in events:
+            try:
+                add_event(ev)
+            except StorageError:
+                pass  # the reading is saved; a missed log line must not fail the post
         return
     with _mem_lock:
+        prev_pump = bool(_mem_latest.get("pump"))
+        prev_fan = bool(_mem_latest.get("fan"))
         _mem_latest.update(fields)
         if history_row is not None:
             now = time.time()
             if now - _mem_last_log >= _LOG_GATE_SECONDS:
                 _mem_last_log = now
                 _mem_history.appendleft(history_row)
+    for ev in _auto_events(prev_pump, prev_fan, fields, event_ts, pump_manual, skip_pump_events):
+        add_event(ev)
 
 
 # ---------------------------------------------------------------------------
