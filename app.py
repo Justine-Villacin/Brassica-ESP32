@@ -387,6 +387,18 @@ def api_control():
 
     # Also update the cache immediately so the dashboard's next poll shows
     # the button in the right state without waiting for the ESP32 round-trip.
+    try:
+        was_on = bool((storage.get_latest() or {}).get("pump"))
+        if state != was_on:
+            storage.add_event({
+                "ts": datetime.now(LOCAL_TZ).strftime("%Y-%m-%d %H:%M:%S"),
+                "type": "pump",
+                "action": "on" if state else "off",
+                "msg": f"Water Pump turned {'ON' if state else 'OFF'} (manual)",
+            })
+    except Exception as exc:  # noqa: BLE001 - the command itself succeeded
+        print(f"[control] could not save the activity event: {exc!r}")
+
     storage.patch_latest({"pump": state})
 
     return jsonify({
@@ -459,16 +471,15 @@ def update_from_esp32():
     if isinstance(data.get("fw"), str):
         fields["firmware"] = _short_str(data["fw"], 16)
 
-    # The firmware sets "log": true about every 5 minutes. Saving a history
-    # row on every post would use up a free Redis plan within days.
-    # The firmware sets "log": true about every 5 minutes. Saving a history
-    # row on every post would use up a free Redis plan within days.
+    # The firmware sets "log": true about every 5 minutes, and storage.py also
+    # enforces one saved row per 5 minutes. Only what the sensors measured in
+    # THIS post is logged: a disconnected sensor is "ERR" (left out of the
+    # averages), never an old value.
+    local_ts = datetime.fromtimestamp(now, LOCAL_TZ).strftime("%Y-%m-%d %H:%M:%S")
     history_row = None
     if _as_bool(data.get("log"), True):
-        # Log only what the sensors measured in THIS post. A disconnected or
-        # missing sensor is "ERR" (left out of averages), never a stale value.
         history_row = {
-            "timestamp": datetime.fromtimestamp(now, LOCAL_TZ).strftime("%Y-%m-%d %H:%M:%S"),
+            "timestamp": local_ts,
             "temp":  values["temperature"] if dht_ok   and "temperature" in values else "ERR",
             "hum":   values["humidity"]    if dht_ok   and "humidity"    in values else "ERR",
             "soil1": values["soil_1"]      if soil1_ok and "soil_1"      in values else "ERR",
@@ -476,7 +487,15 @@ def update_from_esp32():
             "pump": pump,
             "fan": fan,
         }
-    storage.record_update(fields, history_row)  # raises StorageError -> HTTP 503
+
+    # While a manual override exists, pump changes are logged by /api/control
+    # (so the log shows what the user did, not a confusing automatic "ON").
+    override = storage.kv_get_many(["manual_pump"])["manual_pump"]
+    storage.record_update(          # raises StorageError -> HTTP 503
+        fields, history_row,
+        event_ts=local_ts, pump_manual=pump_override,
+        skip_pump_events=override is not None,
+    )
 
     # ----- Everything below is best-effort: the reading is already saved, so a
     # hiccup here must never make the ESP32 think its update failed. -----
@@ -488,7 +507,6 @@ def update_from_esp32():
     # the value — the firmware confirms on every post while the override is
     # active ("ctl": true), so this fires roughly every 10 s hosted / 3 s local.
     latest_state = storage.get_latest()
-    override = storage.kv_get_many(["manual_pump"])["manual_pump"]
     if override is not None:
         try:
             storage.kv_set("manual_pump", override, ttl=180)   # refresh TTL
@@ -893,71 +911,77 @@ def api_history():
 
 @app.route("/api/activity")
 def api_activity():
-    """Returns automation turn-ON events for a specific date, plus available dates."""
+    """Activity log for one date, plus the dates that have events.
+
+    Source of events:
+      * the live event log written by /update and /api/control (exact times,
+        includes manual actions and runs shorter than the 5-minute history), and
+      * pump/fan OFF->ON changes found in older history rows, only for the time
+        BEFORE the first live event (old days, e.g. restored CSV data).
+    """
     rows, _source = _resolve_history_rows()
-    if not rows:
-        return jsonify({"status": "success", "events": [], "dates": [], "current_date": None})
 
-    # Group events by date and collect all unique valid dates
-    days_map = {}
-    prev_pump = False
-    prev_fan = False
-    
-    for r in rows:
-        if not r or len(r) < 6:
-            continue
-        
-        ts_str = r[0]
-        if len(r) >= 7:
-            pump_val, fan_val = r[5], r[6]
-        else:
-            pump_val, fan_val = r[4], r[5]
-        
-        is_pump = str(pump_val).strip().lower() in ("true", "1", "active", "on")
-        is_fan = str(fan_val).strip().lower() in ("true", "1", "active", "on")
+    try:
+        live = storage.get_events()
+    except storage.StorageError as exc:
+        print(f"[activity] could not read the event log: {exc}")
+        live = []
 
-        # Parse date safely
-        raw_date_str = str(ts_str).split(".")[0].strip()
-        dt = None
+    def parse_dt(text):
+        raw = str(text).split(".")[0].strip()
         for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
             try:
-                dt = datetime.strptime(raw_date_str, fmt)
-                break
+                return datetime.strptime(raw, fmt)
             except ValueError:
                 continue
-        
+        return None
+
+    events = []  # (datetime, type, action, msg)
+    for ev in live:
+        dt = parse_dt(ev.get("ts"))
+        if dt and ev.get("type") in ("pump", "fan"):
+            events.append((dt, ev["type"], ev.get("action", "on"), ev.get("msg") or ""))
+    first_live = min((e[0] for e in events), default=None)
+
+    prev_pump = False
+    prev_fan = False
+    for r in rows or []:
+        if not r or len(r) < 6:
+            continue
+        pump_val, fan_val = (r[5], r[6]) if len(r) >= 7 else (r[4], r[5])
+        is_pump = str(pump_val).strip().lower() in ("true", "1", "active", "on")
+        is_fan = str(fan_val).strip().lower() in ("true", "1", "active", "on")
+        dt = parse_dt(r[0])
         if not dt:
             continue
+        if first_live is None or dt < first_live:
+            if is_pump and not prev_pump:
+                events.append((dt, "pump", "on", "Water Pump turned ON"))
+            if is_fan and not prev_fan:
+                events.append((dt, "fan", "on", "Exhaust Fan turned ON"))
+        prev_pump, prev_fan = is_pump, is_fan
 
-        date_key = dt.strftime("%Y-%m-%d")
-        day_events = days_map.setdefault(date_key, [])
+    days_map = {}
+    for dt, etype, action, msg in sorted(events, key=lambda e: e[0]):
+        days_map.setdefault(dt.strftime("%Y-%m-%d"), []).append({
+            "time": dt.strftime("%I:%M %p"),
+            "msg": msg,
+            "type": etype,
+            "action": action,
+        })
 
-        # Detect transition from OFF -> ON
-        if is_pump and not prev_pump:
-            day_events.append({"time": dt.strftime("%I:%M %p"), "msg": "Water Pump turned ON", "type": "pump"})
-        if is_fan and not prev_fan:
-            day_events.append({"time": dt.strftime("%I:%M %p"), "msg": "Exhaust Fan turned ON", "type": "fan"})
-
-        prev_pump = is_pump
-        prev_fan = is_fan
-
-    available_dates = sorted([d for d in days_map.keys() if days_map[d]], reverse=True)
+    available_dates = sorted(days_map.keys(), reverse=True)
     if not available_dates:
         return jsonify({"status": "success", "events": [], "dates": [], "current_date": None})
 
-    # Requested date or default to the latest date with events
     requested_date = request.args.get("date")
-    if not requested_date or requested_date not in days_map:
-        current_date = available_dates[0]
-    else:
-        current_date = requested_date
-
-    events = days_map.get(current_date, [])
-    events.reverse()  # Newest first for that day
+    current_date = requested_date if requested_date in days_map else available_dates[0]
+    day_events = list(reversed(days_map[current_date]))  # newest first
 
     return jsonify({
         "status": "success",
-        "events": events,
+        "events": day_events,
         "dates": available_dates,
-        "current_date": current_date
+        "current_date": current_date,
+        "live_events": len(live),   # how many events the live log holds (0 = none saved yet)
     })

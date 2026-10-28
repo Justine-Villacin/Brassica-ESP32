@@ -332,8 +332,8 @@ def record_update(fields, history_row=None, event_ts=None, pump_manual=False, sk
         for ev in events:
             try:
                 add_event(ev)
-            except StorageError:
-                pass  # the reading is saved; a missed log line must not fail the post
+            except StorageError as exc:
+                print(f"[storage] could not save activity event: {exc}")
         return
     with _mem_lock:
         prev_pump = bool(_mem_latest.get("pump"))
